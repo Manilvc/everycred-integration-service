@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     login_max_failed_attempts: int = Field(default=5, ge=1)
     login_lockout_minutes: int = Field(default=15, ge=1)
 
+    # Keys API keys' stored HMAC. Changing it invalidates every issued
+    # key, so rotate it only together with reissuing all client keys.
+    api_key_hash_secret: SecretStr = Field(min_length=32)
+
     @property
     def is_production(self) -> bool:
         """Return True when running in the production environment."""

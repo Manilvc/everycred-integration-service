@@ -47,5 +47,10 @@ Read `docs/README.md` before adding code. In short:
 
 ## Auth
 
+- Client projects authenticate with `X-API-Key` through the
+  `CurrentClient` dependency (`app/features/clients/dependencies.py`).
+  Never log or return a full key except in the one-time issue response.
 - Passwords and JWTs go through `app/core/security.py` only.
-- Protect super admin routes with the `CurrentSuperAdmin` dependency.
+- Protect super admin routes with the `CurrentSuperAdmin` dependency,
+  or `dependencies=[Depends(get_current_super_admin)]` on the router
+  when every route needs it.

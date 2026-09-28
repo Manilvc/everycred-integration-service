@@ -11,6 +11,7 @@ os.environ["DATABASE_URL"] = "mysql+aiomysql://test:test@127.0.0.1:3306/test"
 os.environ["JWT_SECRET_KEY"] = "test-signing-key-" + "x" * 32
 os.environ["SUPER_ADMIN_BOOTSTRAP_TOKEN"] = "test-bootstrap-token-" + "y" * 32
 os.environ["LOGIN_MAX_FAILED_ATTEMPTS"] = "5"
+os.environ["API_KEY_HASH_SECRET"] = "test-api-key-secret-" + "z" * 32
 os.environ["LOG_JSON"] = "false"
 
 import pytest  # noqa: E402
@@ -24,8 +25,11 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 )
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+# Model modules are imported so Base.metadata knows every table.
+import app.features.clients.models  # noqa: E402, F401
+import app.features.integration_types.models  # noqa: E402, F401
+import app.features.super_admins.models  # noqa: E402, F401
 from app.core.database import Base, get_db_session  # noqa: E402
-from app.features.super_admins import models  # noqa: E402, F401
 from app.main import create_app  # noqa: E402
 
 BOOTSTRAP_TOKEN = os.environ["SUPER_ADMIN_BOOTSTRAP_TOKEN"]
@@ -64,3 +68,22 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
             transport=transport, base_url="http://testserver"
         ) as http_client:
             yield http_client
+
+
+@pytest.fixture
+async def super_admin_headers(client: AsyncClient) -> dict[str, str]:
+    """Register a super admin through bootstrap and return auth headers."""
+    credentials = {
+        "email": "fixture.admin@example.com",
+        "password": "fixture admin passphrase",
+    }
+    await client.post(
+        "/api/v1/super-admins/register",
+        json={**credentials, "full_name": "Fixture Admin"},
+        headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
+    )
+    login_response = await client.post(
+        "/api/v1/super-admins/login", json=credentials
+    )
+    access_token = login_response.json()["access_token"]
+    return {"Authorization": f"Bearer {access_token}"}

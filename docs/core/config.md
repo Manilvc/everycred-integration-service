@@ -81,6 +81,7 @@ providers. Tests can replace it with `app.dependency_overrides`.
 | `SUPER_ADMIN_BOOTSTRAP_TOKEN` | unset, ≥ 32 chars          | Allows registering the first super admin |
 | `LOGIN_MAX_FAILED_ATTEMPTS` | `5`                          | Wrong passwords before lockout           |
 | `LOGIN_LOCKOUT_MINUTES`  | `15`                            | Lockout duration                         |
+| `API_KEY_HASH_SECRET`    | required, ≥ 32 chars            | HMAC key for stored client API key hashes |
 
 ## Failure modes
 

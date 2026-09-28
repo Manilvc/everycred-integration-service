@@ -18,12 +18,15 @@ app/
 │   ├── database.py      # Async engine, sessions, ORM Base, DbSession
 │   ├── models.py        # UTCDateTime, UUID and timestamp mixins
 │   ├── security.py      # Argon2 password hashing, JWT access tokens
+│   ├── api_keys.py      # Client API key generation and verification
 │   └── http_client.py   # Shared httpx client, HttpClient dependency
 ├── shared/              # Feature-agnostic schemas and helpers
 │   ├── schemas.py       # ErrorResponse, Page[ItemT]
 │   └── pagination.py    # Pagination query dependency
 └── features/
+    ├── clients/         # Client projects, API keys, per-client settings
     ├── health/          # Liveness and readiness probes
+    ├── integration_types/ # Catalogue of integration types (DB-driven)
     └── super_admins/    # Super admin registration, login, profile
 migrations/              # Alembic (env.py reads DATABASE_URL from settings)
 ```
@@ -91,8 +94,11 @@ Core modules:
 - [http_client](core/http_client.md)
 - [models](core/models.md)
 - [security](core/security.md)
+- [api_keys](core/api_keys.md)
 
 Features:
 
+- [clients](features/clients.md)
 - [health](features/health.md)
+- [integration_types](features/integration_types.md)
 - [super_admins](features/super_admins.md)

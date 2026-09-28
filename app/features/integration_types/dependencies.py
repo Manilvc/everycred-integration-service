@@ -1,0 +1,21 @@
+"""Dependency providers for the integration types feature."""
+
+from typing import Annotated
+
+from fastapi import Depends
+
+from app.core.database import DbSession
+from app.features.integration_types.repository import (
+    IntegrationTypeRepository,
+)
+from app.features.integration_types.service import IntegrationTypeService
+
+
+def get_integration_type_service(session: DbSession) -> IntegrationTypeService:
+    """Build an integration type service bound to the request's session."""
+    return IntegrationTypeService(IntegrationTypeRepository(session))
+
+
+IntegrationTypeServiceDep = Annotated[
+    IntegrationTypeService, Depends(get_integration_type_service)
+]
