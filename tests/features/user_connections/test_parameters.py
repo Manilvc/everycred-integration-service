@@ -95,7 +95,14 @@ async def test_type_without_connector_still_accepts_parameters(
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"not valid": 1}, {"class": 1}, {"_private": 1}, {"1st": 1}],
+    [
+        {"not valid": 1},
+        {"class": 1},
+        {"_private": 1},
+        {"1st": 1},
+        {"operation": 1},
+        {"self": 1},
+    ],
 )
 async def test_invalid_kwarg_names_are_rejected(
     client: AsyncClient,

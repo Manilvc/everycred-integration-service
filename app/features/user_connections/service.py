@@ -24,6 +24,7 @@ from app.connectors.base import (
     ConnectorContext,
     ConnectorError,
     IntegrationConnector,
+    InvalidInputError,
     MissingParametersError,
     OperationOutcome,
     UnknownOperationError,
@@ -66,6 +67,7 @@ from app.features.user_connections.exceptions import (
     IntegrationToolInactiveError,
     IntegrationToolNotSelectedError,
     InvalidConnectionParametersError,
+    InvalidInputsError,
     MissingInputsError,
     OperationFailedError,
     OperationNotFoundError,
@@ -392,6 +394,8 @@ class UserConnectionService:
             failure = OperationNotFoundError(target.tool.code, operation)
         except MissingParametersError as exc:
             failure = self._missing_inputs_error(target.tool.code, exc)
+        except InvalidInputError as exc:
+            failure = InvalidInputsError(exc.names, exc.reason)
         except ConnectorError as exc:
             failure = OperationFailedError(str(exc)[:LAST_ERROR_MAX_LENGTH])
         except TimeoutError:
@@ -520,6 +524,8 @@ class UserConnectionService:
         except MissingParametersError as exc:
             # A setup problem, not a provider failure: nothing to record.
             raise self._missing_inputs_error(tool_code, exc) from exc
+        except InvalidInputError as exc:
+            raise InvalidInputsError(exc.names, exc.reason) from exc
         except ConnectorError as exc:
             failure_message = str(exc)[:LAST_ERROR_MAX_LENGTH]
             logger.warning(

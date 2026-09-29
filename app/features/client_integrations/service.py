@@ -19,6 +19,7 @@ from app.connectors.base import (
     ConnectorContext,
     ConnectorError,
     IntegrationConnector,
+    InvalidInputError,
     MissingParametersError,
     UnknownOperationError,
 )
@@ -99,11 +100,15 @@ class _ToolState:
 
     @property
     def is_enabled(self) -> bool:
-        # Without a row, storing credentials counts as switching it on,
-        # which keeps setups made through the super admin API working.
+        # Without a row, a tool is in effect on when users could use it:
+        # its credentials are stored (setups made through the super
+        # admin API), or it needs none. This mirrors the check in
+        # user_connections, which blocks only an explicit switch-off.
+        if self.connector_class is None:
+            return False
         if self.connection is not None:
             return self.connection.is_enabled
-        return self.credential is not None
+        return self.credential is not None or not self.missing_credentials
 
     @property
     def card_status(self) -> CardStatus:
@@ -285,8 +290,12 @@ class ClientIntegrationService:
 
         connection = state.connection
         if connection is None:
+            # Keep the switch where it effectively was; testing must not
+            # turn a tool on that the admin never enabled.
             connection = ClientToolConnection(
-                client_id=client.id, integration_tool_id=tool.id
+                client_id=client.id,
+                integration_tool_id=tool.id,
+                is_enabled=state.is_enabled,
             )
             self.connections.add(connection)
         connection.status = status
@@ -347,6 +356,8 @@ class ClientIntegrationService:
                 False,
                 "Missing: " + ", ".join(exc.missing) + ".",
             )
+        except InvalidInputError as exc:
+            return False, False, f"Invalid settings: {exc.reason}."
         except ConnectorError as exc:
             return False, True, str(exc)
         except TimeoutError:

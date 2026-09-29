@@ -42,6 +42,19 @@ class MissingParametersError(Exception):
         self.missing = missing
 
 
+class InvalidInputError(Exception):
+    """Raised when an input value cannot be used where it is placed.
+
+    Attributes:
+        names: Placeholder names such as ``kwargs.id``; never values.
+    """
+
+    def __init__(self, names: list[str], reason: str) -> None:
+        super().__init__(f"{', '.join(names)}: {reason}")
+        self.names = names
+        self.reason = reason
+
+
 @dataclass(frozen=True, slots=True)
 class ConnectorContext:
     """What a connector knows about the call besides its arguments.

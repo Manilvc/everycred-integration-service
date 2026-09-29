@@ -8,6 +8,7 @@ import pytest
 from app.connectors.base import (
     ConnectorContext,
     ConnectorError,
+    InvalidInputError,
     MissingParametersError,
     UnknownOperationError,
 )
@@ -233,3 +234,36 @@ def test_describe_operations_lists_inputs() -> None:
     assert operations["verify_document"].description == (
         "Check a document number"
     )
+
+
+@pytest.mark.parametrize("record_id", ["..", ".", "", " .. "])
+async def test_dot_segments_in_path_inputs_are_rejected(
+    record_id: str,
+) -> None:
+    captured: list[httpx.Request] = []
+    connector = make_connector(
+        lambda _: json_response({"success": True}),
+        settings={"region": "in"},
+        captured=captured,
+    )
+
+    with pytest.raises(InvalidInputError) as error:
+        await connector.run_operation("fetch_record", record_id=record_id)
+
+    assert error.value.names == ["kwargs.record_id"]
+    assert captured == []
+
+
+@pytest.mark.parametrize("record_id", ["%2E%2E", "..%2F..", "a/../../b"])
+async def test_encoded_traversal_stays_inside_the_path(record_id: str) -> None:
+    captured: list[httpx.Request] = []
+    connector = make_connector(
+        lambda _: json_response({"success": True}),
+        settings={"region": "in"},
+        captured=captured,
+    )
+
+    await connector.run_operation("fetch_record", record_id=record_id)
+
+    assert captured[0].url.path.startswith("/api/v1/records/")
+    assert captured[0].url.host == "sandbox.example.com"

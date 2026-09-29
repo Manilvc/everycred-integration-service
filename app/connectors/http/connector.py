@@ -17,6 +17,7 @@ from app.connectors.base import (
     ConnectionTestOutcome,
     ConnectorError,
     IntegrationConnector,
+    InvalidInputError,
     OperationDescription,
     OperationOutcome,
     UnknownOperationError,
@@ -27,7 +28,11 @@ from app.connectors.http.config import (
     OperationConfig,
     ResponseMapping,
 )
-from app.connectors.http.templates import render, url_encode_values
+from app.connectors.http.templates import (
+    find_placeholders,
+    render,
+    url_encode_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -299,11 +304,14 @@ class HttpConnector(IntegrationConnector):
             ],
             values,
         )
+        self._reject_unsafe_path_values(operation.path, values)
         base_url = config.environments[self._environment(config)]
         rendered_path = render(operation.path, url_encode_values(values))
+        url = f"{base_url}{rendered_path}"
+        self._check_stays_on_base(url, base_url)
         request: dict[str, Any] = {
             "method": operation.method,
-            "url": f"{base_url}{rendered_path}",
+            "url": url,
             "headers": {
                 name: str(value)
                 for name, value in render(config.headers, values).items()
@@ -315,6 +323,39 @@ class HttpConnector(IntegrationConnector):
         ):
             request["json"] = render(operation.body, values)
         return request
+
+    @staticmethod
+    def _reject_unsafe_path_values(
+        path_template: str, values: dict[str, Any]
+    ) -> None:
+        # "/" is percent-encoded, but "." and ".." are not special to
+        # encoding, and HTTP clients resolve them as dot segments. An
+        # input of ".." would otherwise move the request to another
+        # endpoint while still carrying the client's credentials.
+        unsafe = [
+            placeholder
+            for placeholder in sorted(find_placeholders(path_template))
+            if str(render(f"{{{placeholder}}}", values)).strip()
+            in {"", ".", ".."}
+        ]
+        if unsafe:
+            raise InvalidInputError(
+                unsafe, "path inputs may not be empty, '.', or '..'"
+            )
+
+    @staticmethod
+    def _check_stays_on_base(url: str, base_url: str) -> None:
+        # Second line of defence: after the client library normalises
+        # the URL, it must still be on the configured host and under the
+        # configured base path.
+        target, base = httpx.URL(url), httpx.URL(base_url)
+        base_path = base.path.rstrip("/") + "/"
+        if target.host != base.host or not (target.path + "/").startswith(
+            base_path
+        ):
+            raise InvalidInputError(
+                ["path"], "the request would leave the configured base URL"
+            )
 
     def _parse_response(
         self, response: httpx.Response, mapping: ResponseMapping
