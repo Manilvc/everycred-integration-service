@@ -18,7 +18,10 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     PYTHONDONTWRITEBYTECODE=1
 
-WORKDIR /build
+# The virtualenv is built at the same path it runs from. Its scripts
+# (uvicorn, alembic) hard-code the interpreter path in their first line,
+# so a venv built in /build and copied to /app fails with "not found".
+WORKDIR /app
 
 # Manifests first so the slow dependency layer is rebuilt only when they
 # change. --frozen fails the build if uv.lock and pyproject.toml disagree,
@@ -44,7 +47,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 WORKDIR /app
 
-COPY --from=builder --chown=integration:integration /build/.venv /app/.venv
+COPY --from=builder --chown=integration:integration /app/.venv /app/.venv
 COPY --chown=integration:integration app ./app
 COPY --chown=integration:integration migrations ./migrations
 COPY --chown=integration:integration alembic.ini pyproject.toml README.md ./

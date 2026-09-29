@@ -16,6 +16,7 @@ htmlcov/
 tests/
 docs/
 .claude/
+.github/
 CLAUDE.md
 docker-compose*.yml
 Dockerfile

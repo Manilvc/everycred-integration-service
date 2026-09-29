@@ -120,6 +120,7 @@ Guides:
 Operations:
 
 - [deployment (Docker, nginx sub-path)](deployment.md)
+- [CI/CD (GitHub Actions, ECR, SSH deploy)](cicd.md)
 
 Integrations:
 

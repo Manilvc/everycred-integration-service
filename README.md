@@ -92,6 +92,7 @@ docker compose up -d        # runs migrations, then starts the API on 127.0.0.1:
 
 Then add the nginx location from `deploy/nginx/integration-subpath.conf`.
 Full steps, environment, MySQL and AWS setup: [docs/deployment.md](docs/deployment.md).
+Merges to `development` deploy automatically: see [docs/cicd.md](docs/cicd.md).
 
 ## Common commands
 

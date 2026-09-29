@@ -13,13 +13,10 @@
 name: everycred-integration
 
 x-service-defaults: &service-defaults
-  image: everycred-integration-service:latest
-  # Both services build (the second from cache), so `docker compose up`
-  # never tries to pull this locally built image from a registry.
-  build:
-    context: .
-    target: runtime
-  pull_policy: build
+  # Built locally by default. The CD pipeline sets INTEGRATION_IMAGE to the
+  # ECR image it pushed and PULL_POLICY=always, so the server pulls the
+  # tested image instead of building its own.
+  image: ${INTEGRATION_IMAGE:-everycred-integration-service:latest}
   env_file: [.env]
   # Reach MySQL (or anything else) running on the host as
   # host.docker.internal, e.g. DATABASE_URL=mysql+aiomysql://...@host.docker.internal:3306/...
@@ -45,11 +42,21 @@ services:
     container_name: everycred-integration-migrate
     command: ["migrate"]
     restart: "no"
+    # Uses the image `api` builds, rather than building it too: two
+    # services building one tag in parallel race and fail with
+    # "image ... already exists". `never` stops compose from trying to
+    # pull it before the build; the CD pipeline sets PULL_POLICY=always.
+    pull_policy: ${PULL_POLICY:-never}
 
   api:
     <<: *service-defaults
     container_name: everycred-integration-api
     command: ["serve"]
+    # The only service that builds the image; `migrate` reuses it.
+    build:
+      context: .
+      target: runtime
+    pull_policy: ${PULL_POLICY:-build}
     depends_on:
       migrate:
         condition: service_completed_successfully
