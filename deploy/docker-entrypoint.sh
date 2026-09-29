@@ -2,7 +2,8 @@
 # Container entrypoint for the integration service.
 #
 #   serve    Run the API with uvicorn (default).
-#   migrate  Apply Alembic migrations, then exit.
+#   migrate  Wait for the database (explaining any failure in plain words),
+#            apply Alembic migrations, then exit.
 #   *        Run the given command as-is (for example `sh` when debugging).
 #
 # Settings for `serve`:
@@ -14,6 +15,9 @@
 #                    Proxies trusted for X-Forwarded-* headers. The compose
 #                    file publishes the port on 127.0.0.1 only, so the only
 #                    caller is nginx on the host; "*" is safe there.
+#
+# Settings for `migrate`:
+#   DB_WAIT_SECONDS  How long to keep retrying the database (default 30).
 set -eu
 
 case "${1:-serve}" in
@@ -29,6 +33,7 @@ case "${1:-serve}" in
             --timeout-graceful-shutdown 20
         ;;
     migrate)
+        python -m app.core.db_check
         exec alembic upgrade head
         ;;
     *)

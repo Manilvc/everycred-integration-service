@@ -31,6 +31,7 @@ flowchart LR
 | `Dockerfile` | Multi-stage image: dependencies built with uv, slim non-root runtime (uid 10001), health check |
 | `deploy/docker-entrypoint.sh` | `serve` (uvicorn) or `migrate` (Alembic) |
 | `docker-compose.yml` | `migrate` runs once, then `api` starts; port published on loopback only |
+| `docker-compose.mysql-socket.yml` | Optional override: MySQL on the same server through its Unix socket |
 | `deploy/nginx/integration-subpath.conf` | Upstream and `location /integration/` to paste into the existing vhost |
 | `.dockerignore` | Keeps `.env`, `.venv`, tests, and docs out of the image |
 
@@ -47,7 +48,7 @@ Set at least:
 | Variable | Deployed value |
 |----------|----------------|
 | `ENVIRONMENT` | `production` (or `staging`) |
-| `DATABASE_URL` | `mysql+aiomysql://<user>:<password>@host.docker.internal:3306/everycred_integration?charset=utf8mb4` — `host.docker.internal` is MySQL on the host; use the DB host name for a separate server |
+| `DATABASE_URL` | MySQL on this server: the socket URL from [MySQL on the same server](#mysql-on-the-same-server-recommended-socket). Separate server: `mysql+aiomysql://<user>:<password>@<db-host>:3306/everycred_integration?charset=utf8mb4` |
 | `JWT_SECRET_KEY`, `API_KEY_HASH_SECRET`, `CONNECTION_ENCRYPTION_KEYS` | New random values (generation commands in `.env.example`) |
 | `SUPER_ADMIN_BOOTSTRAP_TOKEN` | Set for the first deploy only; remove after creating the first super admin |
 | `SECRET_STORE_BACKEND` | `aws` (required in production) |
@@ -75,6 +76,53 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES
 Narrow `'%'` to the Docker bridge subnet or the host's address if MySQL
 listens beyond localhost. MySQL on the host must accept connections from
 the Docker bridge (`bind-address` not limited to `127.0.0.1`).
+
+### MySQL on the same server (recommended: socket)
+
+When MySQL runs on the Docker host itself, connect through its Unix socket
+instead of TCP. It works whatever MySQL's `bind-address` and the firewall
+say, and MySQL stays off the network.
+
+1. Find the socket: `mysql -e "SELECT @@socket"` (usually
+   `/var/run/mysqld/mysqld.sock`).
+2. Create the account for `localhost` (socket connections count as local):
+
+   ```sql
+   CREATE DATABASE IF NOT EXISTS everycred_integration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   CREATE USER 'everycred_integration'@'localhost' IDENTIFIED BY '<strong password>';
+   GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES
+     ON everycred_integration.* TO 'everycred_integration'@'localhost';
+   ```
+
+3. In `.env`:
+
+   ```dotenv
+   COMPOSE_FILE=docker-compose.yml:docker-compose.mysql-socket.yml
+   DATABASE_URL=mysql+aiomysql://everycred_integration:<password>@localhost/everycred_integration?unix_socket=/run/mysqld/mysqld.sock&charset=utf8mb4
+   # Only if the socket directory is not /var/run/mysqld:
+   # MYSQL_SOCKET_DIR=/path/to/socket/dir
+   ```
+
+   `COMPOSE_FILE` makes plain `docker compose ...` commands include the
+   socket override, which mounts the directory into both containers at
+   `/run/mysqld`. Keep `/run/mysqld/mysqld.sock` in the URL; that is the
+   path inside the container.
+
+4. `docker compose up -d`.
+
+Before migrating, the `migrate` container waits up to `DB_WAIT_SECONDS`
+(30 by default) for the database and, if it cannot connect, prints the
+cause and fix in plain words (for example "127.0.0.1 inside a container is
+the container itself") instead of a traceback. Passwords are never
+printed.
+
+### MySQL elsewhere (TCP)
+
+For MySQL on another machine, or when you prefer TCP to a local MySQL,
+use a normal host in `DATABASE_URL` (`host.docker.internal` for the Docker
+host). MySQL must listen beyond `127.0.0.1` (`bind-address`), the
+firewall must allow Docker's network (`172.16.0.0/12`) on 3306, and the
+account must exist for `'172.%'`.
 
 ### AWS credentials
 

@@ -1,0 +1,23 @@
+# Use MySQL running on the same server through its Unix socket.
+#
+# The socket needs no network: it works whatever MySQL's bind-address and
+# the firewall say, MySQL treats it as a 'localhost' connection, and MySQL
+# stays unreachable from the network. Recommended when the database runs
+# on the Docker host itself.
+#
+# Enable it by adding this line to .env (compose reads it from there):
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.mysql-socket.yml
+# and point DATABASE_URL at the socket:
+#   DATABASE_URL=mysql+aiomysql://<user>:<password>@localhost/everycred_integration?unix_socket=/run/mysqld/mysqld.sock&charset=utf8mb4
+#
+# The MySQL account must exist for 'localhost'. If the socket is elsewhere
+# on your server (check with: mysql -e "SELECT @@socket"), set
+# MYSQL_SOCKET_DIR in .env to its directory.
+
+services:
+  migrate:
+    volumes:
+      - ${MYSQL_SOCKET_DIR:-/var/run/mysqld}:/run/mysqld
+  api:
+    volumes:
+      - ${MYSQL_SOCKET_DIR:-/var/run/mysqld}:/run/mysqld
