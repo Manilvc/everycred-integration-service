@@ -313,13 +313,20 @@ class LocalSecretStore:
         return secret
 
 
-def get_secret_store(session: DbSession, settings: SettingsDep) -> SecretStore:
-    """Return the configured secret store for this request."""
+def build_secret_store(
+    session: AsyncSession, settings: Settings
+) -> SecretStore:
+    """Return the configured secret store; also used by the worker."""
     if settings.secret_store_backend is SecretStoreBackend.AWS:
         # Settings validation guarantees the region is set here.
         client = _secrets_manager_client(settings.aws_region or "")
         return AwsSecretsManagerStore(client, settings)
     return LocalSecretStore(session, settings)
+
+
+def get_secret_store(session: DbSession, settings: SettingsDep) -> SecretStore:
+    """Return the configured secret store for this request."""
+    return build_secret_store(session, settings)
 
 
 SecretStoreDep = Annotated[SecretStore, Depends(get_secret_store)]

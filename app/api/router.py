@@ -28,10 +28,12 @@ from app.features.integration_tools.router import (
 from app.features.integration_types.router import (
     router as integration_types_router,
 )
+from app.features.sessions.router import router as sessions_router
 from app.features.super_admins.router import router as super_admins_router
 from app.features.user_connections.router import (
     router as user_connections_router,
 )
+from app.features.webhooks.router import router as webhooks_router
 from app.shared.schemas import ErrorResponse
 
 api_v1_router = APIRouter(
@@ -52,3 +54,5 @@ api_v1_router.include_router(client_self_service_router)
 api_v1_router.include_router(client_integration_tools_router)
 api_v1_router.include_router(client_integrations_router)
 api_v1_router.include_router(user_connections_router)
+api_v1_router.include_router(sessions_router)
+api_v1_router.include_router(webhooks_router)

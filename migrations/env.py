@@ -21,8 +21,10 @@ import app.features.client_integrations.models  # noqa: F401
 import app.features.clients.models  # noqa: F401
 import app.features.integration_tools.models  # noqa: F401
 import app.features.integration_types.models  # noqa: F401
+import app.features.sessions.models  # noqa: F401
 import app.features.super_admins.models  # noqa: F401
 import app.features.user_connections.models  # noqa: F401
+import app.features.webhooks.models  # noqa: F401
 from app.core.config import get_settings
 from app.core.database import Base
 from app.core.models import UTCDateTime

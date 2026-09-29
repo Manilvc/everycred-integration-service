@@ -26,6 +26,7 @@ from app.features.integration_tools.schemas import (
     ClientToolFilters,
     ConnectorInfo,
     ConnectorParameterResponse,
+    FlowDescriptionResponse,
     IntegrationToolFilters,
     IntegrationToolResponse,
     IntegrationToolUpsert,
@@ -201,6 +202,20 @@ class IntegrationToolService:
                 operations=[
                     OperationDescriptionResponse.model_validate(operation)
                     for operation in operations
+                ],
+                flows=[
+                    FlowDescriptionResponse(
+                        name=name,
+                        purpose=flow.purpose,
+                        description=flow.description,
+                        inputs=flow.all_inputs(),
+                        outputs=list(flow.outputs),
+                    )
+                    for name, flow in (
+                        connector_class.describe_flows(tool.connector_config)
+                        if connector_class
+                        else {}
+                    ).items()
                 ],
             ),
             created_at=tool.created_at,

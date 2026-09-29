@@ -72,6 +72,23 @@ class OperationDescriptionResponse(BaseModel):
     required_credentials: list[str]
 
 
+class FlowDescriptionResponse(BaseModel):
+    """A verification or gather flow the tool offers.
+
+    Attributes:
+        inputs: Everything the holder may be asked for, in order. Send
+            what you already have when starting a session; the rest is
+            requested through ``awaiting_inputs``.
+        outputs: Attribute names a completed session returns.
+    """
+
+    name: str
+    purpose: str
+    description: str | None
+    inputs: list[str]
+    outputs: list[str]
+
+
 class ConnectorInfo(BaseModel):
     """Whether the tool can be connected yet, and how to call it.
 
@@ -81,6 +98,7 @@ class ConnectorInfo(BaseModel):
             by the tool's configuration.
         parameters: Arguments of a Python connector's ``connect``.
         operations: Operations a client can run for its users.
+        flows: Verification and gather flows, run as sessions.
     """
 
     is_available: bool
@@ -89,6 +107,7 @@ class ConnectorInfo(BaseModel):
     operations: list[OperationDescriptionResponse] = Field(
         default_factory=list
     )
+    flows: list[FlowDescriptionResponse] = Field(default_factory=list)
 
 
 class IntegrationToolSummary(BaseModel):

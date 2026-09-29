@@ -12,6 +12,7 @@ Supported placeholders:
 ``{args.<index>}``        A positional argument, counted from 0
 ``{credentials.<name>}``  The client's stored credential for the tool
 ``{settings.<name>}``     The client's non-secret setting
+``{session.<name>}``      A value an earlier flow step captured
 ``{user_uuid}``           The client's id for the user
 ``{client_id}``           The client project's id
 ========================  ==========================================
@@ -30,7 +31,7 @@ from urllib.parse import quote
 from app.connectors.base import MissingParametersError
 
 _PLACEHOLDER = re.compile(r"\{([a-z_]+)(?:\.([A-Za-z0-9_]+))?\}")
-_SOURCES_WITH_KEY = {"kwargs", "args", "credentials", "settings"}
+_SOURCES_WITH_KEY = {"kwargs", "args", "credentials", "settings", "session"}
 _SOURCES_WITHOUT_KEY = {"user_uuid", "client_id"}
 
 

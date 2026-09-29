@@ -79,6 +79,7 @@ client without any user (so it may not use `args`, `kwargs`, or
 | `{args.<index>}` | Positional input, from 0 |
 | `{credentials.<name>}` | The client's stored credential for the tool |
 | `{settings.<name>}` | The client's non-secret setting for the type |
+| `{session.<name>}` | A value an earlier flow step captured (flows only) |
 | `{user_uuid}`, `{client_id}` | Identifiers of the call |
 
 A value that is exactly one placeholder keeps its JSON type; inside a
@@ -104,6 +105,54 @@ With the `response` mapping, a JSON reply becomes `success`, `data`,
 and `message`. `success` is true only for a 2xx status **and** a truthy
 `success_field` (when present). Non-JSON replies, timeouts, and network
 errors become `502 operation_failed`.
+
+### Flows
+
+A flow chains operations into a verification (Confirm) or data
+gathering (Gather) procedure, run as a [session](features/sessions.md).
+Each step names an operation, the `inputs` the holder must have given
+before it runs, and values to `capture` from its response for later
+steps:
+
+```json
+"flows": {
+  "aadhaar_otp": {
+    "purpose": "verification",
+    "description": "Aadhaar number, then the OTP sent to it",
+    "steps": [
+      {
+        "operation": "aadhaar_generate_otp",
+        "inputs": ["id_number"],
+        "capture": {"request_ref": "client_id"}
+      },
+      {"operation": "aadhaar_submit_otp", "inputs": ["otp"]}
+    ],
+    "outputs": {
+      "full_name": "full_name",
+      "date_of_birth": "dob",
+      "provider_reference": "session.request_ref"
+    },
+    "verified_when": [{"path": "status", "equals": "valid"}]
+  }
+}
+```
+
+Here `aadhaar_submit_otp` would send
+`{"client_id": "{session.request_ref}", "otp": "{kwargs.otp}"}`.
+The session pauses before step 2 until the OTP is submitted.
+
+- `outputs`: attribute name -> dot path into the **last** step's `data`
+  (`a.b`, `items.0.id`), or `session.<name>`. Required for `gather`.
+- `verified_when`: conditions on the last step's data that must all
+  hold (`equals`, `one_of`, or neither for "present and truthy"). For
+  `verification` only; without any, provider success is enough.
+- A step whose provider reply is `success: false` ends a verification as
+  `not_verified`, and fails a gather session.
+
+Checked when the tool is saved: every operation exists; every
+`{kwargs.x}` is declared as an input by that step or an earlier one;
+every `{session.x}` and `session.` output is captured by an earlier
+step; flows do not use `{args.N}`; headers never use `{session.*}`.
 
 ## Python connectors
 

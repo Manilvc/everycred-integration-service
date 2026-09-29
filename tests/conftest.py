@@ -35,8 +35,10 @@ import app.features.client_integrations.models  # noqa: E402, F401
 import app.features.clients.models  # noqa: E402, F401
 import app.features.integration_tools.models  # noqa: E402, F401
 import app.features.integration_types.models  # noqa: E402, F401
+import app.features.sessions.models  # noqa: E402, F401
 import app.features.super_admins.models  # noqa: E402, F401
 import app.features.user_connections.models  # noqa: E402, F401
+import app.features.webhooks.models  # noqa: E402, F401
 from app.core.database import Base, get_db_session  # noqa: E402
 from app.main import create_app  # noqa: E402
 

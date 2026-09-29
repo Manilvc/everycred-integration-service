@@ -153,6 +153,35 @@ OPENAPI_TAGS: list[dict[str, Any]] = [
             "is taken from the key, so it can only reach its own users."
         ),
     },
+    {
+        "name": "Sessions",
+        "description": (
+            "Verify a user's identity (**Confirm**) or fetch their data "
+            "from a system of record (**Gather**) by running one of the "
+            "tool's configured flows. Start a session; it runs until a "
+            "step needs holder input, such as an OTP, and reports "
+            "`awaiting_input` with the names it needs. Submit them to "
+            "the inputs endpoint. Learn the outcome from the "
+            "`session.completed` / `session.failed` / `session.expired` "
+            "webhook or by polling, then read the attributes from the "
+            "result endpoint.\n\n"
+            "Inputs are held in the secret store only while the session "
+            "is active; results are stored encrypted and deleted "
+            "automatically at `data_expires_at`. Status responses and "
+            "webhooks never contain personal data."
+        ),
+    },
+    {
+        "name": "Webhooks",
+        "description": (
+            "Register the HTTPS endpoint that receives session events. "
+            "Each delivery is signed: `X-EveryCRED-Signature` is "
+            '`t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">` with '
+            "the signing secret shown once when the endpoint is created "
+            "or the secret rotated. Failed deliveries are retried with "
+            "backoff."
+        ),
+    },
 ]
 
 # ReDoc extension: groups tags in the sidebar by who calls them.
@@ -172,6 +201,8 @@ TAG_GROUPS: list[dict[str, Any]] = [
             "Client Self-Service",
             "Client Integrations",
             "User Connections",
+            "Sessions",
+            "Webhooks",
         ],
     },
     {"name": "Operations", "tags": ["Health"]},

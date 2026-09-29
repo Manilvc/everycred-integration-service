@@ -49,7 +49,17 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 # Placeholders a configuration may use in each place. Credentials are
 # allowed anywhere a provider could need them, but never in the URL
 # path, where they would end up in access logs.
-_PATH_SOURCES = {"kwargs", "args", "settings", "user_uuid", "client_id"}
+_PATH_SOURCES = {
+    "kwargs",
+    "args",
+    "settings",
+    "session",
+    "user_uuid",
+    "client_id",
+}
+_INPUT_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+# Dot path into a provider response, e.g. data.address.city or items.0.id.
+_DATA_PATH_PATTERN = r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$"
 # Header names that carry credentials. Their values must come from the
 # secret store; the tool configuration itself is stored unencrypted.
 _SENSITIVE_HEADER = re.compile(r"authorization|api[-_]?key|token|secret", re.I)
@@ -199,6 +209,111 @@ class OAuth2ClientCredentials(BaseModel):
         )
 
 
+class FlowStep(BaseModel):
+    """One call inside a flow.
+
+    Attributes:
+        operation: Operation to run.
+        inputs: Names the caller must have supplied before this step
+            runs; they are passed as ``kwargs``. A step whose inputs are
+            missing pauses the session until they arrive (e.g. an OTP).
+        capture: Session values to keep for later steps, as
+            ``name -> dot path`` into this step's response data (e.g.
+            ``{"request_ref": "client_id"}``). Later steps read them as
+            ``{session.request_ref}``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: str
+    inputs: list[str] = Field(default_factory=list, max_length=20)
+    capture: dict[str, str] = Field(default_factory=dict, max_length=20)
+
+    @model_validator(mode="after")
+    def check_names(self) -> "FlowStep":
+        """Input and capture names become placeholders, so keep them tidy."""
+        for name in [*self.inputs, *self.capture]:
+            if not re.fullmatch(_INPUT_NAME_PATTERN, name):
+                raise ValueError(f"'{name}' must be lower_snake_case")
+        # Inputs are passed as run_operation(operation, **inputs).
+        reserved = {"self", "operation"} & set(self.inputs)
+        if reserved:
+            raise ValueError(
+                f"input name '{reserved.pop()}' is reserved; choose another"
+            )
+        for path in self.capture.values():
+            if not re.fullmatch(_DATA_PATH_PATTERN, path):
+                raise ValueError(f"capture path '{path}' is not a dot path")
+        return self
+
+
+class FlowCondition(BaseModel):
+    """A check on the final step's data that decides "verified".
+
+    Attributes:
+        path: Dot path into the final response data.
+        equals: Required value, when set.
+        one_of: Allowed values, when set.
+        Neither set: the value must be present and truthy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(pattern=_DATA_PATH_PATTERN)
+    equals: Any = None
+    one_of: list[Any] | None = Field(default=None, max_length=50)
+
+
+class FlowConfig(BaseModel):
+    """A named verification or data-gathering procedure.
+
+    Attributes:
+        purpose: ``verification`` (Confirm: is this really the person?)
+            or ``gather`` (fetch attributes from a system of record).
+        description: Shown to clients in the tool listing.
+        steps: Operations run in order; a step waits for its inputs.
+        outputs: Attributes to return, as ``attribute -> dot path`` into
+            the final step's data, or ``session.<name>`` for a captured
+            value. Clients can override these per tool.
+        verified_when: For verification, conditions on the final data
+            that must all hold. Without any, provider success is enough.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: Literal["verification", "gather"]
+    description: str | None = Field(default=None, max_length=500)
+    steps: list[FlowStep] = Field(min_length=1, max_length=10)
+    outputs: dict[str, str] = Field(default_factory=dict, max_length=100)
+    verified_when: list[FlowCondition] = Field(
+        default_factory=list, max_length=20
+    )
+
+    @model_validator(mode="after")
+    def check_outputs(self) -> "FlowConfig":
+        """Validate output paths and purpose-specific rules."""
+        for attribute, path in self.outputs.items():
+            if not re.fullmatch(_INPUT_NAME_PATTERN, attribute):
+                raise ValueError(
+                    f"output attribute '{attribute}' must be lower_snake_case"
+                )
+            if not re.fullmatch(_DATA_PATH_PATTERN, path):
+                raise ValueError(f"output path '{path}' is not a dot path")
+        if self.purpose == "gather" and not self.outputs:
+            raise ValueError("a gather flow must declare outputs")
+        if self.purpose == "gather" and self.verified_when:
+            raise ValueError("verified_when applies to verification flows")
+        return self
+
+    def all_inputs(self) -> list[str]:
+        """Every input any step asks for, in first-use order."""
+        seen: dict[str, None] = {}
+        for step in self.steps:
+            for name in step.inputs:
+                seen.setdefault(name, None)
+        return list(seen)
+
+
 class HttpConnectorConfig(BaseModel):
     """Full configuration of a configuration-driven HTTP connector."""
 
@@ -224,6 +339,13 @@ class HttpConnectorConfig(BaseModel):
             "Operation run by the connect endpoint, typically a cheap "
             "check that the credentials work. When unset, connecting "
             "only checks that every required input is available."
+        ),
+    )
+    flows: dict[str, FlowConfig] = Field(
+        default_factory=dict,
+        description=(
+            "Verification and gather procedures built from operations; "
+            "run as sessions through /client/users/{user}/sessions."
         ),
     )
     test_operation: str | None = Field(
@@ -306,7 +428,7 @@ class HttpConnectorConfig(BaseModel):
         except TemplateSyntaxError as exc:
             raise ValueError(str(exc)) from exc
         if any(
-            _source_of(placeholder) in {"args", "kwargs"}
+            _source_of(placeholder) in {"args", "kwargs", "session"}
             for placeholder in header_placeholders
         ):
             raise ValueError(
@@ -321,6 +443,67 @@ class HttpConnectorConfig(BaseModel):
                     f"header '{header_name}' must take its value from a "
                     "{credentials.<name>} placeholder, not a literal"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def check_flows(self) -> "HttpConnectorConfig":
+        """Check each flow step against the operations it runs.
+
+        Every ``{kwargs.x}`` an operation reads must be declared as an
+        input by that step or an earlier one, and every ``{session.x}``
+        must be captured by an earlier step, so a session can never get
+        stuck on a value nobody is asked for.
+        """
+        for flow_name, flow in self.flows.items():
+            if not re.fullmatch(OPERATION_NAME_PATTERN, flow_name):
+                raise ValueError(
+                    f"flow name '{flow_name}' must be lower_snake_case"
+                )
+            declared_inputs: set[str] = set()
+            captured: set[str] = set()
+            for position, step in enumerate(flow.steps, start=1):
+                operation = self.operations.get(step.operation)
+                if operation is None:
+                    raise ValueError(
+                        f"flow '{flow_name}' step {position} names unknown "
+                        f"operation '{step.operation}'"
+                    )
+                declared_inputs.update(step.inputs)
+                placeholders = operation.placeholders()
+                needed_inputs = {
+                    p.split(".", 1)[1]
+                    for p in placeholders
+                    if p.startswith("kwargs.")
+                }
+                needed_session = {
+                    p.split(".", 1)[1]
+                    for p in placeholders
+                    if p.startswith("session.")
+                }
+                if missing := needed_inputs - declared_inputs:
+                    raise ValueError(
+                        f"flow '{flow_name}' step {position} uses inputs "
+                        f"no step asks for: {', '.join(sorted(missing))}"
+                    )
+                if missing := needed_session - captured:
+                    raise ValueError(
+                        f"flow '{flow_name}' step {position} uses session "
+                        "values no earlier step captures: "
+                        + ", ".join(sorted(missing))
+                    )
+                if any(p.startswith("args.") for p in placeholders):
+                    raise ValueError(
+                        f"flow '{flow_name}' step {position}: flows pass "
+                        "named inputs only; use {kwargs.<name>}"
+                    )
+                captured.update(step.capture)
+            for path in flow.outputs.values():
+                if path.startswith("session.") and (
+                    path.removeprefix("session.") not in captured
+                ):
+                    raise ValueError(
+                        f"flow '{flow_name}' output '{path}' is never captured"
+                    )
         return self
 
     def connection_placeholders(self) -> set[str]:

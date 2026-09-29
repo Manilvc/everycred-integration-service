@@ -1,6 +1,6 @@
 # Integration Service Documentation
 
-> Last updated: 2026-09-28
+> Last updated: 2026-09-29
 
 ## Layout
 
@@ -8,6 +8,7 @@
 app/
 ├── connectors/          # Connectors: Python ones and the config-driven http/
 ├── main.py              # create_app(), lifespan, middleware and router wiring
+├── worker.py            # Background worker: webhooks, expiry, data purge
 ├── api/
 │   └── router.py        # api_v1_router: mounts feature routers under /api/v1
 ├── core/                # Infrastructure every feature relies on
@@ -22,6 +23,7 @@ app/
 │   ├── api_keys.py      # Client API key generation and verification
 │   ├── encryption.py    # Fernet encryption for stored secrets
 │   ├── secret_store.py  # AWS Secrets Manager + KMS, local fallback
+│   ├── data_paths.py    # read_path(): dot paths into provider responses
 │   └── http_client.py   # Shared httpx client, HttpClient dependency
 ├── shared/              # Feature-agnostic schemas and helpers
 │   ├── schemas.py       # ErrorResponse, Page[ItemT]
@@ -31,8 +33,10 @@ app/
     ├── health/          # Liveness and readiness probes
     ├── integration_tools/ # Tools that fulfil types; client tool listing
     ├── integration_types/ # Catalogue of integration types (DB-driven)
+    ├── sessions/        # Confirm (verification) and Gather sessions
     ├── super_admins/    # Super admin registration, login, profile
-    └── user_connections/ # Per-user connections run through connectors
+    ├── user_connections/ # Per-user connections run through connectors
+    └── webhooks/        # Client webhook endpoint and signed deliveries
 migrations/              # Alembic (env.py reads DATABASE_URL from settings)
 ```
 
@@ -102,6 +106,7 @@ Core modules:
 - [api_keys](core/api_keys.md)
 - [encryption](core/encryption.md)
 - [secret_store](core/secret_store.md)
+- [data_paths](core/data_paths.md)
 
 Features:
 
@@ -110,8 +115,10 @@ Features:
 - [health](features/health.md)
 - [integration_tools](features/integration_tools.md)
 - [integration_types](features/integration_types.md)
+- [sessions (Confirm and Gather)](features/sessions.md)
 - [super_admins](features/super_admins.md)
 - [user_connections](features/user_connections.md)
+- [webhooks](features/webhooks.md)
 
 Guides:
 

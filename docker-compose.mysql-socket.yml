@@ -21,3 +21,6 @@ services:
   api:
     volumes:
       - ${MYSQL_SOCKET_DIR:-/var/run/mysqld}:/run/mysqld
+  worker:
+    volumes:
+      - ${MYSQL_SOCKET_DIR:-/var/run/mysqld}:/run/mysqld

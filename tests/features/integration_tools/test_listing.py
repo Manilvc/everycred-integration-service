@@ -101,6 +101,7 @@ async def test_connector_parameters_come_from_its_signature(
         "kind": None,
         "parameters": [],
         "operations": [],
+        "flows": [],
     }
 
 

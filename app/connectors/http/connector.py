@@ -24,6 +24,7 @@ from app.connectors.base import (
 )
 from app.connectors.http import oauth
 from app.connectors.http.config import (
+    FlowConfig,
     HttpConnectorConfig,
     OperationConfig,
     ResponseMapping,
@@ -199,6 +200,15 @@ class HttpConnector(IntegrationConnector):
             )
         return descriptions
 
+    @classmethod
+    def describe_flows(
+        cls, tool_config: dict[str, Any] | None
+    ) -> dict[str, FlowConfig]:
+        """Return the flows declared in the tool's configuration."""
+        if not tool_config:
+            return {}
+        return HttpConnectorConfig.model_validate(tool_config).flows
+
     async def _send(
         self,
         config: HttpConnectorConfig,
@@ -283,6 +293,7 @@ class HttpConnector(IntegrationConnector):
             "kwargs": kwargs,
             "credentials": self.context.credentials,
             "settings": self.context.client_settings,
+            "session": self.context.session_values,
             "user_uuid": str(user_uuid) if user_uuid else None,
             "client_id": str(self.context.client_id),
         }
