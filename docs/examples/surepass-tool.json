@@ -1,0 +1,26 @@
+{
+  "name": "SurePass",
+  "provider": "SurePass",
+  "description": "Indian KYC and document verification APIs.",
+  "is_active": true,
+  "display_order": 10,
+  "integration_types": ["confirm"],
+  "connector_config": {
+    "type": "http",
+    "environments": {
+      "sandbox": "https://sandbox.surepass.io/api/v1",
+      "production": "https://kyc-api.surepass.io/api/v1"
+    },
+    "default_environment": "sandbox",
+    "headers": {
+      "Authorization": "Bearer {credentials.api_token}"
+    },
+    "response": {
+      "success_field": "success",
+      "data_field": "data",
+      "message_field": "message"
+    },
+    "timeout_seconds": 30,
+    "operations": {}
+  }
+}
