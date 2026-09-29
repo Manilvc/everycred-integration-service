@@ -141,6 +141,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build with compose
+        # Builds the way the server does, from the buildx cache above, so
+        # compose-level problems (such as two services racing to build one
+        # image tag) fail here instead of on the server.
+        run: docker compose build
+
       - name: Smoke test the image
         # Starts the real image with fake settings and checks liveness;
         # no database is needed for /health/live.
