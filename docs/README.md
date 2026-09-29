@@ -117,6 +117,10 @@ Guides:
 
 - [connectors: configuration-driven and Python](connectors.md)
 
+Operations:
+
+- [deployment (Docker, nginx sub-path)](deployment.md)
+
 Integrations:
 
 - [SurePass](integrations/surepass.md)

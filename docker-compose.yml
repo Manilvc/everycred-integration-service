@@ -1,0 +1,81 @@
+# Deployment of the integration service next to the existing EveryCRED
+# backend on the same host.
+#
+# Public URL: https://api-evrc.viitorcloud.in/integration/...
+# nginx on the host strips /integration and proxies to 127.0.0.1:8030
+# (see deploy/nginx/integration-subpath.conf). MySQL is the existing server,
+# reached through DATABASE_URL in .env; no database container is started.
+#
+#   docker compose build
+#   docker compose up -d          # runs migrations first, then the API
+#   docker compose logs -f api
+
+name: everycred-integration
+
+x-service-defaults: &service-defaults
+  image: everycred-integration-service:latest
+  # Both services build (the second from cache), so `docker compose up`
+  # never tries to pull this locally built image from a registry.
+  build:
+    context: .
+    target: runtime
+  pull_policy: build
+  env_file: [.env]
+  # Reach MySQL (or anything else) running on the host as
+  # host.docker.internal, e.g. DATABASE_URL=mysql+aiomysql://...@host.docker.internal:3306/...
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  # Hardening: the app writes nothing to disk and needs no privileges.
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  # One-shot: applies Alembic migrations, then exits. The API waits for it.
+  migrate:
+    <<: *service-defaults
+    container_name: everycred-integration-migrate
+    command: ["migrate"]
+    restart: "no"
+
+  api:
+    <<: *service-defaults
+    container_name: everycred-integration-api
+    command: ["serve"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # Must match the nginx location; uvicorn uses it to build URLs.
+      ROOT_PATH: /integration
+      PORT: "8030"
+      WEB_CONCURRENCY: "2"
+      # Only nginx on the host can reach the published port (below), and
+      # its requests arrive from the Docker bridge gateway, so trusting all
+      # forwarders is safe here and required for correct client IPs.
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      # Loopback only: the service is reachable solely through nginx.
+      - "127.0.0.1:8030:8030"
+    restart: always
+    mem_limit: 768m
+    cpus: "1.0"
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8030/health/live', timeout=3).status == 200 else 1)"
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
