@@ -35,9 +35,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------------------
 FROM python:3.13-slim-bookworm AS runtime
 
+# /run/mysqld is where docker-compose.mysql-socket.yml mounts the host's
+# MySQL socket. It is created here because the root filesystem is
+# read-only at run time.
 RUN groupadd --gid 10001 integration \
  && useradd --uid 10001 --gid integration --no-create-home \
-      --shell /usr/sbin/nologin integration
+      --shell /usr/sbin/nologin integration \
+ && mkdir -p /run/mysqld
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

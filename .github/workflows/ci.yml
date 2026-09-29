@@ -118,6 +118,22 @@ jobs:
     name: Docker image
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      mysql:
+        # For running the image's own `migrate` command end to end.
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: everycred_integration
+          MYSQL_USER: ci
+          MYSQL_PASSWORD: ci-password
+          MYSQL_ROOT_PASSWORD: ci-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pci-root-password"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -146,6 +162,13 @@ jobs:
         # compose-level problems (such as two services racing to build one
         # image tag) fail here instead of on the server.
         run: docker compose build
+
+      - name: Run the image's migrate command
+        # The same command compose runs before the API: database check,
+        # then Alembic, inside the real image. Host networking reaches the
+        # MySQL service on 127.0.0.1, like MySQL on a deployment server.
+        run: |
+          docker run --rm --network host             -e DATABASE_URL='mysql+aiomysql://ci:ci-password@127.0.0.1:3306/everycred_integration?charset=utf8mb4'             -e JWT_SECRET_KEY=ci-only-jwt-signing-key-not-a-secret-0000             -e API_KEY_HASH_SECRET=ci-only-api-key-hash-secret-not-real-0000             -e CONNECTION_ENCRYPTION_KEYS=Y2ktb25seS1mZXJuZXQta2V5LW5vdC1hLXNlY3JldCE=             --read-only --tmpfs /tmp --cap-drop ALL             everycred-integration-service:ci migrate
 
       - name: Smoke test the image
         # Starts the real image with fake settings and checks liveness;
