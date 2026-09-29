@@ -12,6 +12,11 @@ os.environ["JWT_SECRET_KEY"] = "test-signing-key-" + "x" * 32
 os.environ["SUPER_ADMIN_BOOTSTRAP_TOKEN"] = "test-bootstrap-token-" + "y" * 32
 os.environ["LOGIN_MAX_FAILED_ATTEMPTS"] = "5"
 os.environ["API_KEY_HASH_SECRET"] = "test-api-key-secret-" + "z" * 32
+# A fixed, publicly known Fernet key: fine for tests, never for real data.
+os.environ["CONNECTION_ENCRYPTION_KEYS"] = (
+    "aW50ZWdyYXRpb24tc2VydmljZS10ZXN0LWtleS0zMmI="
+)
+os.environ["CONNECTOR_TIMEOUT_SECONDS"] = "0.5"
 os.environ["LOG_JSON"] = "false"
 
 import pytest  # noqa: E402
@@ -26,9 +31,12 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 # Model modules are imported so Base.metadata knows every table.
+import app.features.client_integrations.models  # noqa: E402, F401
 import app.features.clients.models  # noqa: E402, F401
+import app.features.integration_tools.models  # noqa: E402, F401
 import app.features.integration_types.models  # noqa: E402, F401
 import app.features.super_admins.models  # noqa: E402, F401
+import app.features.user_connections.models  # noqa: E402, F401
 from app.core.database import Base, get_db_session  # noqa: E402
 from app.main import create_app  # noqa: E402
 

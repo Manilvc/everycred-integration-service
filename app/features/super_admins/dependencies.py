@@ -83,24 +83,42 @@ async def authorize_registration(
 ) -> SuperAdmin | None:
     """Decide whether the caller may register a super admin.
 
-    A signed-in super admin may always register another. Without a
-    token, the ``X-Bootstrap-Token`` header is accepted only while no
-    super admin exists yet, which is how the first account is created.
+    A signed-in super admin may always register another. The
+    ``X-Bootstrap-Token`` header is accepted only while no super admin
+    exists yet, which is how the first account is created.
+
+    When ``X-Bootstrap-Token`` is sent it decides the request, even if an
+    ``Authorization`` header is present too. API tools such as Swagger
+    keep sending an old bearer token after it expires, and letting that
+    stale token win would reject a correct bootstrap request.
 
     Returns:
         The registering super admin, or None for bootstrap registration.
 
     Raises:
-        AuthenticationError: Neither credential was sent, or the
-            bootstrap token is wrong or bootstrapping is not configured.
+        AuthenticationError: Neither credential was sent, the bearer
+            token is invalid, or the bootstrap token is wrong or not
+            configured.
         BootstrapClosedError: The bootstrap token is valid but a super
             admin already exists.
     """
-    if credentials is not None:
-        return await _resolve_bearer_token(credentials, service, settings)
-
     if x_bootstrap_token is None:
-        raise AuthenticationError("Authentication is required.")
+        if credentials is None:
+            raise AuthenticationError(
+                "Authentication is required. To register the first super "
+                "admin, send the bootstrap token in the X-Bootstrap-Token "
+                "header."
+            )
+        try:
+            return await _resolve_bearer_token(credentials, service, settings)
+        except AuthenticationError as exc:
+            # The most common mistake is pasting the bootstrap token as a
+            # bearer token, so say where it belongs.
+            raise AuthenticationError(
+                "Invalid or expired token. To register the first super "
+                "admin, send the bootstrap token in the X-Bootstrap-Token "
+                "header, not as a Bearer token."
+            ) from exc
 
     expected_token = settings.super_admin_bootstrap_token
     # compare_digest keeps the comparison time independent of how many

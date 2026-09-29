@@ -82,6 +82,13 @@ providers. Tests can replace it with `app.dependency_overrides`.
 | `LOGIN_MAX_FAILED_ATTEMPTS` | `5`                          | Wrong passwords before lockout           |
 | `LOGIN_LOCKOUT_MINUTES`  | `15`                            | Lockout duration                         |
 | `API_KEY_HASH_SECRET`    | required, ≥ 32 chars            | HMAC key for stored client API key hashes |
+| `CONNECTION_ENCRYPTION_KEYS` | required                    | Fernet keys for connection parameters; first encrypts |
+| `CONNECTOR_TIMEOUT_SECONDS` | `30`                         | Maximum time a connector may run (≤ 300) |
+| `SECRET_STORE_BACKEND`   | `local`                         | `aws` (Secrets Manager + KMS) or `local`; must be `aws` in production |
+| `AWS_REGION`             | unset                           | Required with `aws` |
+| `SECRETS_KMS_KEY_ID`     | unset                           | KMS key ARN, id, or alias; required with `aws` |
+| `SECRETS_NAME_PREFIX`    | `everycred/integration-service` | Prefix of every secret name |
+| `SECRET_RECOVERY_WINDOW_DAYS` | `7`                        | Days a deleted secret stays recoverable (7-30) |
 
 ## Failure modes
 

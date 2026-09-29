@@ -6,6 +6,7 @@ from app.core.exceptions import (
     AuthenticationError,
     ConflictError,
     NotFoundError,
+    PermissionDeniedError,
 )
 
 
@@ -50,3 +51,27 @@ class InvalidApiKeyError(AuthenticationError):
 
     def __init__(self) -> None:
         super().__init__("A valid API key is required.")
+
+
+class IntegrationNotEnabledError(PermissionDeniedError):
+    """Raised when the client has not enabled the integration type."""
+
+    error_code = "integration_not_enabled"
+
+    def __init__(self, integration_type_code: str) -> None:
+        super().__init__(
+            f"Integration '{integration_type_code}' is not enabled for "
+            "this client."
+        )
+
+
+class ToolCredentialsNotFoundError(NotFoundError):
+    """Raised when the client has no credentials stored for the tool."""
+
+    error_code = "tool_credentials_not_found"
+
+    def __init__(self, tool_code: str) -> None:
+        super().__init__(
+            f"No credentials are stored for tool '{tool_code}' for this "
+            "client."
+        )

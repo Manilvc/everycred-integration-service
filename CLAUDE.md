@@ -45,6 +45,26 @@ Read `docs/README.md` before adding code. In short:
 - Tests use in-memory SQLite through a `get_db_session` override, so
   avoid MySQL-only SQL in models.
 
+## Connectors
+
+- Each row in `integration_tools` gets a connector in
+  `app/connectors/<tool_code>.py`, registered with
+  `@register_connector("<tool_code>")` and imported in
+  `app/connectors/__init__.py`. Follow `docs/connectors.md`.
+- Connectors are keyed by tool, not by integration type; the tool is
+  the one chosen in the client's `client_integration_configs` row.
+- Prefer a `connector_config` (generic HTTP connector) over Python
+  code for REST providers; see `docs/connectors.md`.
+- Credentials and user inputs go through `app/core/secret_store.py`
+  only; the database stores references. Never log or return them.
+
+## Client Integrations screen
+
+- `app/features/client_integrations/` backs the client admin's
+  Integrations page (X-API-Key). Card statuses are derived in
+  `_ToolState.card_status`; keep them in sync with `CardStatus` and
+  `docs/features/client_integrations.md`.
+
 ## Auth
 
 - Client projects authenticate with `X-API-Key` through the

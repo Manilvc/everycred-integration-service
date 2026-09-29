@@ -10,6 +10,7 @@ from app.features.clients.models import (
     Client,
     ClientApiKey,
     ClientIntegrationConfig,
+    ClientToolCredential,
 )
 from app.features.integration_types.models import IntegrationType
 
@@ -139,3 +140,44 @@ class ClientIntegrationConfigRepository:
     def add(self, config: ClientIntegrationConfig) -> None:
         """Stage a new configuration for insertion."""
         self.session.add(config)
+
+
+class ClientToolCredentialRepository:
+    """Queries for :class:`ClientToolCredential` rows."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get(
+        self, client_id: uuid.UUID, integration_tool_id: uuid.UUID
+    ) -> ClientToolCredential | None:
+        """Return the client's credential reference for one tool."""
+        return await self.session.scalar(
+            select(ClientToolCredential).where(
+                ClientToolCredential.client_id == client_id,
+                ClientToolCredential.integration_tool_id
+                == integration_tool_id,
+            )
+        )
+
+    async def by_tool_for_client(
+        self, client_id: uuid.UUID
+    ) -> dict[uuid.UUID, ClientToolCredential]:
+        """Return all of a client's credential references by tool id."""
+        credentials = await self.session.scalars(
+            select(ClientToolCredential).where(
+                ClientToolCredential.client_id == client_id
+            )
+        )
+        return {
+            credential.integration_tool_id: credential
+            for credential in credentials
+        }
+
+    def add(self, credential: ClientToolCredential) -> None:
+        """Stage a new credential reference for insertion."""
+        self.session.add(credential)
+
+    async def delete(self, credential: ClientToolCredential) -> None:
+        """Stage a credential reference for deletion."""
+        await self.session.delete(credential)

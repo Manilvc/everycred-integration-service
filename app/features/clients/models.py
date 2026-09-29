@@ -14,10 +14,12 @@ from sqlalchemy import (
     Uuid,
     true,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.core.models import TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
+from app.core.secret_store import SECRET_REFERENCE_MAX_LENGTH
+from app.features.integration_tools.models import IntegrationTool
 
 CLIENT_CODE_MAX_LENGTH = 50
 CLIENT_NAME_MAX_LENGTH = 150
@@ -102,6 +104,8 @@ class ClientIntegrationConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     Attributes:
         client_id: Client the configuration belongs to.
         integration_type_id: Integration type being configured.
+        integration_tool_id: Tool chosen for this type, if any. Its
+            connector runs when the client's users connect.
         is_enabled: Disabled configurations are hidden from the client.
         settings: Free-form, non-secret options for this integration.
             Provider credentials belong in the secrets manager, not here.
@@ -138,4 +142,69 @@ class ClientIntegrationConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     settings: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
+    )
+    # RESTRICT: a tool in use must be deactivated rather than deleted.
+    integration_tool_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "integration_tools.id",
+            ondelete="RESTRICT",
+            name="fk_client_integration_configs_tool",
+        ),
+        index=True,
+    )
+
+    integration_tool: Mapped[IntegrationTool | None] = relationship(
+        lazy="selectin"
+    )
+
+
+class ClientToolCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Reference to a client's credentials for one integration tool.
+
+    The credentials themselves (for example a SurePass API token) live
+    in the secret store; this row keeps only where to find them and
+    which names they contain.
+
+    Attributes:
+        client_id: Client the credentials belong to.
+        integration_tool_id: Tool they authenticate against.
+        secret_reference: Secrets Manager ARN, or ``local:<id>`` in
+            development.
+        credential_names: Keys present in the secret, for display.
+    """
+
+    __tablename__ = "client_tool_credentials"
+    __table_args__ = (
+        UniqueConstraint(
+            "client_id",
+            "integration_tool_id",
+            name="uq_client_tool_credentials_client_tool",
+        ),
+    )
+
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "clients.id",
+            ondelete="CASCADE",
+            name="fk_client_tool_credentials_client",
+        ),
+        nullable=False,
+    )
+    integration_tool_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "integration_tools.id",
+            ondelete="RESTRICT",
+            name="fk_client_tool_credentials_tool",
+        ),
+        nullable=False,
+        index=True,
+    )
+    secret_reference: Mapped[str] = mapped_column(
+        String(SECRET_REFERENCE_MAX_LENGTH), nullable=False
+    )
+    credential_names: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
     )

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Path, Response, status
 from app.features.clients.dependencies import (
     ApiKeyServiceDep,
     ClientConfigurationServiceDep,
+    ClientCredentialServiceDep,
     ClientServiceDep,
 )
 from app.features.clients.schemas import (
@@ -19,7 +20,10 @@ from app.features.clients.schemas import (
     ClientResponse,
     IntegrationConfigResponse,
     IntegrationConfigUpdate,
+    ToolCredentialsResponse,
+    ToolCredentialsUpdate,
 )
+from app.features.integration_tools.models import TOOL_CODE_MAX_LENGTH
 from app.features.integration_types.models import CODE_MAX_LENGTH
 from app.features.super_admins.dependencies import (
     CurrentSuperAdmin,
@@ -34,8 +38,14 @@ router = APIRouter(
     # means a new route cannot forget the check.
     dependencies=[Depends(get_current_super_admin)],
     responses={
-        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
-        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_401_UNAUTHORIZED: {
+            "model": ErrorResponse,
+            "description": "Missing or invalid super admin token",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "model": ErrorResponse,
+            "description": "Token does not belong to a super admin",
+        },
     },
 )
 
@@ -49,6 +59,17 @@ _CLIENT_NOT_FOUND = {
 IntegrationTypeCode = Annotated[
     str, Path(min_length=1, max_length=CODE_MAX_LENGTH)
 ]
+ToolCode = Annotated[str, Path(min_length=1, max_length=TOOL_CODE_MAX_LENGTH)]
+_CREDENTIAL_ERRORS = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ErrorResponse,
+        "description": "Client, tool, or stored credentials not found",
+    },
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "model": ErrorResponse,
+        "description": "The secret store could not be reached",
+    },
+}
 
 
 @router.post(
@@ -56,7 +77,12 @@ IntegrationTypeCode = Annotated[
     response_model=ClientResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register a client project",
-    responses={status.HTTP_409_CONFLICT: {"model": ErrorResponse}},
+    responses={
+        status.HTTP_409_CONFLICT: {
+            "model": ErrorResponse,
+            "description": "Client code already in use",
+        }
+    },
 )
 async def create_client(
     details: ClientCreate,
@@ -189,3 +215,53 @@ async def set_client_integration(
 ) -> IntegrationConfigResponse:
     """Create or replace the configuration; settings are not merged."""
     return await service.set_config(client_id, integration_type_code, update)
+
+
+@router.put(
+    "/{client_id}/tools/{tool_code}/credentials",
+    response_model=ToolCredentialsResponse,
+    summary="Store a client's credentials for a tool",
+    responses=_CREDENTIAL_ERRORS,
+)
+async def set_tool_credentials(
+    client_id: uuid.UUID,
+    tool_code: ToolCode,
+    update: ToolCredentialsUpdate,
+    service: ClientCredentialServiceDep,
+) -> ToolCredentialsResponse:
+    """Save credentials (for example an API token) in the secret store.
+
+    Only a reference is kept in the database. Values are never returned
+    by any endpoint; calling this again replaces them (rotation).
+    """
+    return await service.set_credentials(client_id, tool_code, update)
+
+
+@router.get(
+    "/{client_id}/tools/{tool_code}/credentials",
+    response_model=ToolCredentialsResponse,
+    summary="See which credentials a client has stored for a tool",
+    responses=_CREDENTIAL_ERRORS,
+)
+async def get_tool_credentials(
+    client_id: uuid.UUID,
+    tool_code: ToolCode,
+    service: ClientCredentialServiceDep,
+) -> ToolCredentialsResponse:
+    """Return the stored credential names and dates, never the values."""
+    return await service.get_credentials(client_id, tool_code)
+
+
+@router.delete(
+    "/{client_id}/tools/{tool_code}/credentials",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a client's credentials for a tool",
+    responses=_CREDENTIAL_ERRORS,
+)
+async def delete_tool_credentials(
+    client_id: uuid.UUID,
+    tool_code: ToolCode,
+    service: ClientCredentialServiceDep,
+) -> None:
+    """Remove the reference and schedule the secret for deletion."""
+    await service.delete_credentials(client_id, tool_code)

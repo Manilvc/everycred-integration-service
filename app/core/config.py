@@ -9,8 +9,9 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
 
+from cryptography.fernet import Fernet
 from fastapi import Depends
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -23,6 +24,13 @@ class Environment(StrEnum):
     DEVELOPMENT = "development"
     STAGING = "staging"
     PRODUCTION = "production"
+
+
+class SecretStoreBackend(StrEnum):
+    """Where credentials and user connection inputs are stored."""
+
+    AWS = "aws"
+    LOCAL = "local"
 
 
 class Settings(BaseSettings):
@@ -75,6 +83,73 @@ class Settings(BaseSettings):
     # Keys API keys' stored HMAC. Changing it invalidates every issued
     # key, so rotate it only together with reissuing all client keys.
     api_key_hash_secret: SecretStr = Field(min_length=32)
+
+    # Comma-separated Fernet keys. The first encrypts; all of them are
+    # tried when decrypting, so a new key can be put in front and the
+    # old one kept until existing data has been re-encrypted.
+    connection_encryption_keys: SecretStr
+    connector_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+
+    # Where credentials and user connection inputs are kept. "aws" uses
+    # Secrets Manager, encrypting each secret with SECRETS_KMS_KEY_ID;
+    # the database stores only the secret's ARN. "local" keeps
+    # Fernet-encrypted values in the local_secrets table and exists for
+    # development and tests only.
+    secret_store_backend: SecretStoreBackend = SecretStoreBackend.LOCAL
+    aws_region: str | None = None
+    secrets_kms_key_id: str | None = None
+    secrets_name_prefix: str = Field(
+        default="everycred/integration-service",
+        pattern=r"^[A-Za-z0-9/_+=.@-]{1,200}$",
+    )
+    # Deleted secrets stay recoverable for this long (AWS allows 7-30).
+    secret_recovery_window_days: int = Field(default=7, ge=7, le=30)
+
+    @field_validator("connection_encryption_keys")
+    @classmethod
+    def check_encryption_keys(cls, keys: SecretStr) -> SecretStr:
+        """Fail at startup if any configured key is not a Fernet key."""
+        key_list = [
+            key.strip()
+            for key in keys.get_secret_value().split(",")
+            if key.strip()
+        ]
+        if not key_list:
+            raise ValueError("at least one encryption key is required")
+        for key in key_list:
+            try:
+                Fernet(key)
+            except ValueError as exc:
+                # The key itself is never echoed into the error.
+                raise ValueError(
+                    "each key must be a urlsafe base64-encoded 32-byte "
+                    "Fernet key"
+                ) from exc
+        return keys
+
+    @model_validator(mode="after")
+    def check_secret_store(self) -> "Settings":
+        """Refuse configurations that would put secrets in the wrong place.
+
+        Production must use AWS; the local store keeps ciphertext in the
+        service's own database, which is exactly what the AWS store
+        avoids.
+        """
+        if (
+            self.environment is Environment.PRODUCTION
+            and self.secret_store_backend is not SecretStoreBackend.AWS
+        ):
+            raise ValueError(
+                "SECRET_STORE_BACKEND must be 'aws' in production"
+            )
+        if self.secret_store_backend is SecretStoreBackend.AWS and not (
+            self.aws_region and self.secrets_kms_key_id
+        ):
+            raise ValueError(
+                "AWS_REGION and SECRETS_KMS_KEY_ID are required when "
+                "SECRET_STORE_BACKEND is 'aws'"
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

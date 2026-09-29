@@ -97,6 +97,13 @@ the registration response.
      -d '{"email": "admin@example.com", "full_name": "Platform Admin", "password": "<a long passphrase>"}'
    ```
 
+   In Swagger UI, put the token in the endpoint's `x-bootstrap-token`
+   field, **not** in the Authorize dialog. Authorize sends it as a
+   Bearer token, which fails with "Invalid or expired token". When
+   `X-Bootstrap-Token` is sent it takes precedence over any
+   `Authorization` header, so a stale token left in Authorize does not
+   get in the way.
+
 3. Remove `SUPER_ADMIN_BOOTSTRAP_TOKEN` from the environment. The
    endpoint already refuses it once an account exists; removing it
    also takes the code path out of play entirely.

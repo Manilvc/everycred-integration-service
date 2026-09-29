@@ -32,13 +32,18 @@ flowchart LR
 | GET    | `/api/v1/clients/{client_id}/api-keys` | List keys (metadata only) |
 | POST   | `/api/v1/clients/{client_id}/api-keys/{api_key_id}/revoke` | Revoke a key |
 | GET    | `/api/v1/clients/{client_id}/integrations` | List the client's integration settings |
-| PUT    | `/api/v1/clients/{client_id}/integrations/{integration_type_code}` | Set settings for one type |
+| PUT    | `/api/v1/clients/{client_id}/tools/{tool_code}/credentials` | Store the client's credentials for a tool (secret store) |
+| GET    | `/api/v1/clients/{client_id}/tools/{tool_code}/credentials` | Stored credential names, never values |
+| DELETE | `/api/v1/clients/{client_id}/tools/{tool_code}/credentials` | Remove them |
+| PUT    | `/api/v1/clients/{client_id}/integrations/{integration_type_code}` | Enable a type, choose its tool, set settings |
 
 ### Client (API key)
 
 | Method | Path | Summary |
 |--------|------|---------|
 | GET    | `/api/v1/client/configuration` | The calling client's configuration |
+| PUT    | `/api/v1/client/integrations/{integration_type_code}/settings` | Replace the client's own settings for an enabled type |
+| GET    | `/api/v1/client/integration-tools` | Tools usable for the client (see [integration tools](integration_tools.md)) |
 
 ## Walkthrough
 
@@ -85,6 +90,10 @@ lost, issue a new key and revoke the old one.
 
 ### 3. Configure integrations
 
+Pass `tool_code` to choose which [integration tool](integration_tools.md)
+the client uses for the type; its connector runs when the client's
+users connect.
+
 ```bash
 curl -X PUT http://localhost:8000/api/v1/clients/<client_id>/integrations/confirm \
   -H "Authorization: Bearer <super admin token>" \
@@ -124,6 +133,35 @@ curl http://localhost:8000/api/v1/client/configuration \
 Only enabled configurations of active integration types are returned,
 ordered like the integration type catalogue.
 
+### 5. Client updates its own settings
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/client/integrations/confirm/settings \
+  -H "X-API-Key: eci_3f9a1c07b2de_<secret>" \
+  -H "Content-Type: application/json" \
+  -d '{"settings": {"callback_url": "https://portal.example.com/hook"}}'
+```
+
+- Allowed only for types a super admin has enabled for the client
+  (`403 integration_not_enabled` otherwise).
+- Only `settings` can be sent; `is_enabled` or `tool_code` in the body
+  is rejected with `422`. Those stay super admin decisions.
+- Settings are replaced, not merged, and limited to 16 KB.
+
+### 6. Store the client's tool credentials
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/clients/<client_id>/tools/surepass/credentials \
+  -H "Authorization: Bearer <super admin token>" \
+  -H "Content-Type: application/json" \
+  -d '{"credentials": {"api_token": "<provider token>"}}'
+```
+
+Values go to the [secret store](../core/secret_store.md); the
+`client_tool_credentials` row keeps only the reference and the names.
+Names must match the tool's `{credentials.<name>}` placeholders. Calling
+again replaces (rotates) them.
+
 ## Errors
 
 | Status | `error.code`                 | When |
@@ -134,7 +172,10 @@ ordered like the integration type catalogue.
 | 404    | `client_not_found`           | Unknown `client_id` |
 | 404    | `api_key_not_found`          | Key does not exist *for that client* |
 | 404    | `integration_type_not_found` | Unknown integration type code |
+| 403    | `integration_not_enabled`    | Client settings update for a type not enabled |
+| 404    | `integration_tool_not_found` | Unknown `tool_code` |
 | 409    | `client_code_taken`          | Client code already used |
+| 422    | `integration_tool_not_usable` | Tool does not serve the type or is inactive |
 | 422    | `validation_error`           | Bad code, past expiry, settings over 16 KB, unknown field |
 
 ## Data model

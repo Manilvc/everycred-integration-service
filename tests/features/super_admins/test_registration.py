@@ -145,3 +145,47 @@ async def test_unknown_fields_are_rejected(client: AsyncClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+async def test_bootstrap_token_sent_as_bearer_explains_the_fix(
+    client: AsyncClient,
+) -> None:
+    response = await client.post(
+        REGISTER_URL,
+        json=FIRST_ADMIN,
+        headers={"Authorization": f"Bearer {BOOTSTRAP_TOKEN}"},
+    )
+
+    assert response.status_code == 401
+    assert "X-Bootstrap-Token header" in response.json()["error"]["message"]
+
+
+async def test_bootstrap_header_wins_over_stale_bearer_token(
+    client: AsyncClient,
+) -> None:
+    response = await client.post(
+        REGISTER_URL,
+        json=FIRST_ADMIN,
+        headers={
+            "Authorization": "Bearer an.expired.token",
+            "X-Bootstrap-Token": BOOTSTRAP_TOKEN,
+        },
+    )
+
+    assert response.status_code == 201
+
+
+async def test_signed_in_admin_sending_bootstrap_header_gets_clear_error(
+    client: AsyncClient, first_admin_token: str
+) -> None:
+    response = await client.post(
+        REGISTER_URL,
+        json=SECOND_ADMIN,
+        headers={
+            "Authorization": f"Bearer {first_admin_token}",
+            "X-Bootstrap-Token": BOOTSTRAP_TOKEN,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "bootstrap_closed"

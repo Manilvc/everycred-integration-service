@@ -6,6 +6,7 @@
 
 ```
 app/
+├── connectors/          # Connectors: Python ones and the config-driven http/
 ├── main.py              # create_app(), lifespan, middleware and router wiring
 ├── api/
 │   └── router.py        # api_v1_router: mounts feature routers under /api/v1
@@ -19,6 +20,8 @@ app/
 │   ├── models.py        # UTCDateTime, UUID and timestamp mixins
 │   ├── security.py      # Argon2 password hashing, JWT access tokens
 │   ├── api_keys.py      # Client API key generation and verification
+│   ├── encryption.py    # Fernet encryption for stored secrets
+│   ├── secret_store.py  # AWS Secrets Manager + KMS, local fallback
 │   └── http_client.py   # Shared httpx client, HttpClient dependency
 ├── shared/              # Feature-agnostic schemas and helpers
 │   ├── schemas.py       # ErrorResponse, Page[ItemT]
@@ -26,8 +29,10 @@ app/
 └── features/
     ├── clients/         # Client projects, API keys, per-client settings
     ├── health/          # Liveness and readiness probes
+    ├── integration_tools/ # Tools that fulfil types; client tool listing
     ├── integration_types/ # Catalogue of integration types (DB-driven)
-    └── super_admins/    # Super admin registration, login, profile
+    ├── super_admins/    # Super admin registration, login, profile
+    └── user_connections/ # Per-user connections run through connectors
 migrations/              # Alembic (env.py reads DATABASE_URL from settings)
 ```
 
@@ -95,10 +100,23 @@ Core modules:
 - [models](core/models.md)
 - [security](core/security.md)
 - [api_keys](core/api_keys.md)
+- [encryption](core/encryption.md)
+- [secret_store](core/secret_store.md)
 
 Features:
 
+- [client_integrations](features/client_integrations.md)
 - [clients](features/clients.md)
 - [health](features/health.md)
+- [integration_tools](features/integration_tools.md)
 - [integration_types](features/integration_types.md)
 - [super_admins](features/super_admins.md)
+- [user_connections](features/user_connections.md)
+
+Guides:
+
+- [connectors: configuration-driven and Python](connectors.md)
+
+Integrations:
+
+- [SurePass](integrations/surepass.md)

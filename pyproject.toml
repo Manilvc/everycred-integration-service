@@ -7,6 +7,8 @@ requires-python = ">=3.12"
 dependencies = [
     "aiomysql>=0.3.2",
     "alembic>=1.20.0",
+    "boto3>=1.43.104",
+    "cryptography>=50.0.1",
     "fastapi[standard]>=0.141.1",
     "httpx>=0.28.1",
     "pwdlib[argon2]>=0.3.1",
@@ -19,6 +21,7 @@ dependencies = [
 dev = [
     "aiosqlite>=0.22.1",
     "asgi-lifespan>=2.1.0",
+    "moto[kms,secretsmanager]>=5.2.3",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16.9",

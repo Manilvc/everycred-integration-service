@@ -1,6 +1,7 @@
 """Request and response models for clients, API keys, and settings."""
 
 import json
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated, Any
@@ -20,6 +21,8 @@ from app.features.clients.models import (
     CLIENT_CODE_MAX_LENGTH,
     CLIENT_NAME_MAX_LENGTH,
 )
+from app.features.integration_tools.models import TOOL_CODE_MAX_LENGTH
+from app.features.integration_tools.schemas import IntegrationToolSummary
 from app.shared.pagination import PaginationParams
 
 # Lower-case words joined by single hyphens or underscores.
@@ -143,12 +146,29 @@ class ApiKeyCreatedResponse(ApiKeyResponse):
     )
 
 
+def _check_settings_size(settings: dict[str, Any]) -> dict[str, Any]:
+    encoded_size = len(json.dumps(settings).encode())
+    if encoded_size > MAX_SETTINGS_BYTES:
+        raise ValueError(
+            f"settings must be at most {MAX_SETTINGS_BYTES} bytes as JSON"
+        )
+    return settings
+
+
 class IntegrationConfigUpdate(BaseModel):
     """Configuration of one integration type for one client."""
 
     model_config = ConfigDict(extra="forbid")
 
     is_enabled: bool = True
+    tool_code: str | None = Field(
+        default=None,
+        max_length=TOOL_CODE_MAX_LENGTH,
+        description=(
+            "Tool this client uses for the type. Must serve the type and "
+            "be active. Omit or send null to clear the choice."
+        ),
+    )
     settings: dict[str, Any] = Field(
         default_factory=dict,
         description="Non-secret options. Do not put credentials here.",
@@ -158,12 +178,26 @@ class IntegrationConfigUpdate(BaseModel):
     @classmethod
     def check_settings_size(cls, settings: dict[str, Any]) -> dict[str, Any]:
         """Reject settings larger than ``MAX_SETTINGS_BYTES`` once encoded."""
-        encoded_size = len(json.dumps(settings).encode())
-        if encoded_size > MAX_SETTINGS_BYTES:
-            raise ValueError(
-                f"settings must be at most {MAX_SETTINGS_BYTES} bytes as JSON"
-            )
-        return settings
+        return _check_settings_size(settings)
+
+
+class ClientSettingsUpdate(BaseModel):
+    """Settings a client may change for itself.
+
+    Enabling a type and choosing its tool stay with super admins.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    settings: dict[str, Any] = Field(
+        description="Non-secret options. Do not put credentials here.",
+    )
+
+    @field_validator("settings")
+    @classmethod
+    def check_settings_size(cls, settings: dict[str, Any]) -> dict[str, Any]:
+        """Reject settings larger than ``MAX_SETTINGS_BYTES`` once encoded."""
+        return _check_settings_size(settings)
 
 
 class IntegrationConfigResponse(BaseModel):
@@ -171,6 +205,7 @@ class IntegrationConfigResponse(BaseModel):
 
     integration_type_code: str
     integration_type_name: str
+    integration_tool: IntegrationToolSummary | None
     is_enabled: bool
     settings: dict[str, Any]
     updated_at: datetime
@@ -181,3 +216,51 @@ class ClientConfigurationResponse(BaseModel):
 
     client: ClientSummary
     integrations: list[IntegrationConfigResponse]
+
+
+CREDENTIAL_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+MAX_CREDENTIALS = 20
+MAX_CREDENTIAL_VALUE_LENGTH = 4096
+
+
+class ToolCredentialsUpdate(BaseModel):
+    """A client's credentials for one tool, replaced as a whole.
+
+    Values go straight to the secret store and are never returned.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    credentials: dict[str, str] = Field(
+        min_length=1,
+        max_length=MAX_CREDENTIALS,
+        description=(
+            "Names must match the tool's {credentials.<name>} "
+            'placeholders, e.g. {"api_token": "..."}.'
+        ),
+    )
+
+    @field_validator("credentials")
+    @classmethod
+    def check_credentials(cls, credentials: dict[str, str]) -> dict[str, str]:
+        """Validate names and bound value sizes; never echo values."""
+        for name, value in credentials.items():
+            if not re.fullmatch(CREDENTIAL_NAME_PATTERN, name):
+                raise ValueError(
+                    f"credential name '{name[:40]}' must be lower_snake_case"
+                )
+            if not value or len(value) > MAX_CREDENTIAL_VALUE_LENGTH:
+                raise ValueError(
+                    f"credential '{name}' must be 1 to "
+                    f"{MAX_CREDENTIAL_VALUE_LENGTH} characters"
+                )
+        return credentials
+
+
+class ToolCredentialsResponse(BaseModel):
+    """Which credentials a client has stored for a tool, without values."""
+
+    tool_code: str
+    credential_names: list[str]
+    created_at: datetime
+    updated_at: datetime

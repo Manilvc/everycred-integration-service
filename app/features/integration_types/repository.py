@@ -19,6 +19,15 @@ class IntegrationTypeRepository:
         statement = select(IntegrationType).where(IntegrationType.code == code)
         return await self.session.scalar(statement)
 
+    async def get_by_codes(
+        self, codes: Sequence[str]
+    ) -> Sequence[IntegrationType]:
+        """Return the types whose codes are in ``codes``."""
+        integration_types = await self.session.scalars(
+            select(IntegrationType).where(IntegrationType.code.in_(codes))
+        )
+        return integration_types.all()
+
     async def list_page(
         self, *, include_inactive: bool, limit: int, offset: int
     ) -> tuple[Sequence[IntegrationType], int]:

@@ -13,6 +13,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
+from app.api.openapi import (
+    API_DESCRIPTION,
+    LICENSE_INFO,
+    OPENAPI_TAGS,
+    add_redoc_extensions,
+)
 from app.api.router import api_v1_router
 from app.core.config import get_settings
 from app.core.database import create_database_engine, create_session_factory
@@ -55,10 +61,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[dict[str, Any]]:
 
 
 def _build_operation_id(route: APIRoute) -> str:
-    # Produces ids like "health-check_liveness" so generated API clients
-    # get readable method names instead of FastAPI's path-based default.
-    tag = route.tags[0] if route.tags else "default"
-    return f"{str(tag).lower()}-{route.name}"
+    # Produces ids like "user-connections-connect_user" so generated API
+    # clients get readable method names and ReDoc gets clean anchors,
+    # instead of FastAPI's path-based default.
+    tag = str(route.tags[0]) if route.tags else "default"
+    return f"{tag.lower().replace(' ', '-')}-{route.name}"
 
 
 def create_app() -> FastAPI:
@@ -68,11 +75,17 @@ def create_app() -> FastAPI:
 
     docs_enabled = settings.enable_docs and not settings.is_production
     app = FastAPI(
-        title=settings.service_name,
+        title="EveryCRED Integration Service",
+        summary="Client projects, API keys, and per-user integrations.",
+        description=API_DESCRIPTION,
         version=settings.service_version,
+        license_info=LICENSE_INFO,
+        openapi_tags=OPENAPI_TAGS,
         lifespan=lifespan,
+        # Both viewers read the same schema. All three URLs are off in
+        # production so the API surface is not published.
         docs_url="/docs" if docs_enabled else None,
-        redoc_url=None,
+        redoc_url="/redoc" if docs_enabled else None,
         openapi_url="/openapi.json" if docs_enabled else None,
         generate_unique_id_function=_build_operation_id,
     )
@@ -85,11 +98,17 @@ def create_app() -> FastAPI:
             allow_origins=settings.cors_allowed_origins,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-            allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "X-API-Key",
+                "X-Request-ID",
+            ],
         )
     app.add_middleware(RequestContextMiddleware)
 
     register_exception_handlers(app)
+    add_redoc_extensions(app)
     app.include_router(health_router)
     app.include_router(api_v1_router)
     return app
