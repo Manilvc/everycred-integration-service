@@ -14,6 +14,9 @@ from app.features.user_connections.models import ConnectionStatus
 MAX_ARGS = 20
 MAX_KWARGS = 50
 MAX_PARAMETERS_BYTES = 16_384
+# Parameter names of connect() and run_operation() themselves; kwargs
+# with these names would collide with them when unpacked.
+RESERVED_KWARG_NAMES = {"self", "operation"}
 
 
 class ConnectionParameters(BaseModel):
@@ -43,10 +46,12 @@ class ConnectionParameters(BaseModel):
                 not name.isidentifier()
                 or keyword.iskeyword(name)
                 or name.startswith("_")
+                or name in RESERVED_KWARG_NAMES
             ):
                 raise ValueError(
                     f"kwarg name '{name[:40]}' must be a Python identifier "
-                    "that is not a keyword and does not start with '_'"
+                    "that is not a keyword, does not start with '_', and is "
+                    "not 'self' or 'operation'"
                 )
         encoded_size = len(json.dumps(self.model_dump()).encode())
         if encoded_size > MAX_PARAMETERS_BYTES:

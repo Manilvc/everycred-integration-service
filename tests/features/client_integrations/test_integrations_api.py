@@ -372,3 +372,23 @@ async def test_invalid_updates_are_rejected(
     )
 
     assert response.status_code == 422
+
+
+async def test_testing_an_untouched_tool_does_not_turn_it_on(
+    client: AsyncClient, setup: dict
+) -> None:
+    before = await client.get(tool_url("entra"), headers=setup["key"])
+
+    await client.post(f"{tool_url('entra')}/test", headers=setup["key"])
+    after = await client.get(tool_url("entra"), headers=setup["key"])
+
+    assert before.json()["is_enabled"] is False
+    assert after.json()["is_enabled"] is False
+
+
+async def test_tool_without_connector_is_never_shown_enabled(
+    client: AsyncClient, setup: dict
+) -> None:
+    response = await client.get(tool_url("login-gov"), headers=setup["key"])
+
+    assert response.json()["is_enabled"] is False

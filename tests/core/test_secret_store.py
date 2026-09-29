@@ -2,6 +2,7 @@ from collections.abc import Iterator
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -136,3 +137,46 @@ async def test_local_store_rejects_malformed_reference(
         store = LocalSecretStore(session, get_settings())
         with pytest.raises(SecretStoreError):
             await store.read("local:not-a-uuid")
+
+
+async def test_aws_store_restores_when_aws_reports_invalid_request(
+    aws: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real AWS answers InvalidRequestException for a name pending deletion.
+
+    moto answers ResourceExistsException instead, which hid this case, so
+    the client is patched to behave like AWS.
+    """
+    store = aws["store"]
+    reference = await store.create("aws/behaviour", {"v": 1}, tags={})
+    await store.delete(reference)
+    real_create = aws["client"].create_secret
+
+    def create_like_real_aws(**kwargs):
+        try:
+            description = aws["client"].describe_secret(
+                SecretId=kwargs["Name"]
+            )
+        except ClientError:
+            return real_create(**kwargs)
+        if description.get("DeletedDate"):
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "InvalidRequestException",
+                        "Message": "already scheduled for deletion",
+                    }
+                },
+                "CreateSecret",
+            )
+        return real_create(**kwargs)
+
+    monkeypatch.setattr(aws["client"], "create_secret", create_like_real_aws)
+
+    recreated = await store.create("aws/behaviour", {"v": 2}, tags={})
+
+    assert recreated == reference
+    assert await store.read(reference) == {"v": 2}
+    assert "DeletedDate" not in aws["client"].describe_secret(
+        SecretId=reference
+    )

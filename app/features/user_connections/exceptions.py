@@ -120,3 +120,13 @@ class IntegrationToolDisabledError(ConflictError):
         super().__init__(
             f"Integration tool '{tool_code}' is turned off for this client."
         )
+
+
+class InvalidInputsError(AppError):
+    """Raised when an input value is not allowed where it is used."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "invalid_inputs"
+
+    def __init__(self, names: list[str], reason: str) -> None:
+        super().__init__(f"Invalid inputs ({', '.join(names)}): {reason}.")

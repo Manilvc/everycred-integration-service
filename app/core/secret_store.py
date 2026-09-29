@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 SECRET_REFERENCE_MAX_LENGTH = 1024
 LOCAL_REFERENCE_PREFIX = "local:"
+_NAME_TAKEN_ERRORS = {"ResourceExistsException", "InvalidRequestException"}
 
 
 class SecretStoreError(AppError):
@@ -143,10 +144,14 @@ class AwsSecretsManagerStore:
             )
             return response["ARN"]
         except ClientError as exc:
-            if _error_code(exc) != "ResourceExistsException":
+            # The name is taken: an earlier request created it
+            # (ResourceExistsException), or it was deleted and is still in
+            # its recovery window, which AWS reports as
+            # InvalidRequestException ("scheduled for deletion").
+            if _error_code(exc) not in _NAME_TAKEN_ERRORS:
                 raise self._wrap(exc, "create") from exc
-        # The name exists: an earlier request created it, or it was
-        # deleted and is still inside its recovery window.
+        except BotoCoreError as exc:
+            raise self._wrap(exc, "create") from exc
         return await self._reuse_existing(secret_name, value)
 
     async def read(self, reference: str) -> dict[str, Any]:
@@ -191,6 +196,9 @@ class AwsSecretsManagerStore:
         self, secret_name: str, value: dict[str, Any]
     ) -> str:
         try:
+            # Raises ResourceNotFoundException when the InvalidRequest
+            # was about something else; that is re-raised as a store
+            # error below rather than hidden.
             description = await run_in_threadpool(
                 self._client.describe_secret, SecretId=secret_name
             )
