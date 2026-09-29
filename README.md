@@ -80,6 +80,19 @@ in `app/api/openapi.py`.
 If the server exits at startup with a validation error, a required
 variable in `.env` is missing or invalid; the message names the field.
 
+### Docker (deployed environments)
+
+The service is deployed as a container behind the shared backend domain at
+`https://api-evrc.viitorcloud.in/integration/`:
+
+```bash
+docker compose build
+docker compose up -d        # runs migrations, then starts the API on 127.0.0.1:8030
+```
+
+Then add the nginx location from `deploy/nginx/integration-subpath.conf`.
+Full steps, environment, MySQL and AWS setup: [docs/deployment.md](docs/deployment.md).
+
 ## Common commands
 
 | Task             | Command                              |
