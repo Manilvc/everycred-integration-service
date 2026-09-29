@@ -1,15 +1,15 @@
 # Continuous integration for the integration service.
 #
-# Runs on every push and pull request, and is also called by the deploy
-# workflow so nothing reaches a server without passing it.
+# Runs only for the development branch: on pull requests into it, and on
+# pushes to it through the deploy workflow, which calls this one first so
+# nothing reaches the server without passing it. Pushes to other branches
+# trigger nothing.
 
 name: CI
 
 on:
-  push:
-    # development is checked by the deploy workflow, which calls this one.
-    branches-ignore: [development]
   pull_request:
+    branches: [development]
   workflow_call:
   workflow_dispatch:
 

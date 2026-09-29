@@ -2,11 +2,12 @@
 
 > Last updated: 2026-09-29
 
-Two GitHub Actions workflows in `.github/workflows/`:
+Two GitHub Actions workflows in `.github/workflows/`. Both run only for
+the `development` branch; pushes to other branches trigger nothing.
 
 | Workflow | Trigger | Does |
 |----------|---------|------|
-| `ci.yml` (**CI**) | Every push (except `development`) and pull request; also called by the deploy workflow | Lint, format, tests, migrations on MySQL 8, Docker build and smoke test |
+| `ci.yml` (**CI**) | Pull requests into `development`; called by the deploy workflow on every push to `development` | Lint, format, tests, migrations on MySQL 8, Docker build and smoke test |
 | `deploy-development.yml` (**Deploy development**) | Push to `development` (every merged PR), or run manually | CI, then build and push to ECR, then deploy to the server |
 
 ```mermaid
