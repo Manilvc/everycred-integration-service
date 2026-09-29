@@ -14,6 +14,12 @@ name: everycred-integration
 
 x-service-defaults: &service-defaults
   image: everycred-integration-service:latest
+  # Both services build (the second from cache), so `docker compose up`
+  # never tries to pull this locally built image from a registry.
+  build:
+    context: .
+    target: runtime
+  pull_policy: build
   env_file: [.env]
   # Reach MySQL (or anything else) running on the host as
   # host.docker.internal, e.g. DATABASE_URL=mysql+aiomysql://...@host.docker.internal:3306/...
@@ -36,9 +42,6 @@ services:
   # One-shot: applies Alembic migrations, then exits. The API waits for it.
   migrate:
     <<: *service-defaults
-    build:
-      context: .
-      target: runtime
     container_name: everycred-integration-migrate
     command: ["migrate"]
     restart: "no"
