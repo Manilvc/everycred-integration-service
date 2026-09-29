@@ -13,13 +13,16 @@
 name: everycred-integration
 
 x-service-defaults: &service-defaults
-  image: everycred-integration-service:latest
-  # Both services build (the second from cache), so `docker compose up`
-  # never tries to pull this locally built image from a registry.
+  # Built locally by default. The CD pipeline sets INTEGRATION_IMAGE to the
+  # ECR image it pushed and PULL_POLICY=always, so the server pulls the
+  # tested image instead of building its own.
+  image: ${INTEGRATION_IMAGE:-everycred-integration-service:latest}
+  # With the default policy both services build (the second from cache),
+  # so `docker compose up` never tries to pull a locally built image.
   build:
     context: .
     target: runtime
-  pull_policy: build
+  pull_policy: ${PULL_POLICY:-build}
   env_file: [.env]
   # Reach MySQL (or anything else) running on the host as
   # host.docker.internal, e.g. DATABASE_URL=mysql+aiomysql://...@host.docker.internal:3306/...

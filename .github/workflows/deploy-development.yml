@@ -1,0 +1,176 @@
+# Continuous deployment of the development branch.
+#
+# On every push to `development` (normally a merged pull request):
+#   1. run the full CI workflow;
+#   2. build the image and push it to Amazon ECR, tagged with the commit;
+#   3. on the server, write .env from the ENV secret, pull that exact image
+#      and run `docker compose up -d`, which applies migrations before the
+#      API starts, then wait until the API reports healthy.
+#
+# Follows the same ECR + SSH pattern as the main backend's deploy workflow.
+# Secrets and variables it needs are listed in docs/cicd.md.
+
+name: Deploy development
+
+on:
+  push:
+    branches: [development]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two deploys to the same server at once, and never cancel one
+# halfway through (that could stop between migrations and the API start).
+concurrency:
+  group: deploy-development
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: everycred-integration-service
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  build-and-push:
+    name: Build and push image
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: development
+    outputs:
+      image: ${{ steps.tags.outputs.image }}
+      registry: ${{ steps.ecr.outputs.registry }}
+    steps:
+      - name: Check deployment secrets
+        # Fails with a clear message instead of an obscure AWS or SSH
+        # error when the development environment is not configured yet.
+        env:
+          HAS_AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
+          HAS_SERVER: ${{ secrets.HOST != '' && secrets.USERNAME != '' && secrets.SSH_KEY != '' }}
+          HAS_ENV: ${{ secrets.ENV != '' }}
+        run: |
+          missing=""
+          [ "$HAS_AWS_KEY" = "true" ] || missing="$missing AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY"
+          [ "$HAS_SERVER" = "true" ] || missing="$missing HOST/USERNAME/SSH_KEY"
+          [ "$HAS_ENV" = "true" ] || missing="$missing ENV"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets in the 'development' environment:$missing. See docs/cicd.md."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          base="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}"
+          # The commit tag is what gets deployed, so a redeploy always runs
+          # exactly the image that passed CI for that commit.
+          echo "image=${base}:${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "moving=${base}:development" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.image }}
+            ${{ steps.tags.outputs.moving }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy:
+    name: Deploy to server
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: development
+    env:
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/everycred-integration-service' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy compose file to the server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: 22
+          source: docker-compose.yml
+          target: ${{ env.DEPLOY_PATH }}
+
+      - name: Pull the image and start it
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DEPLOY_ENV_CONTENT: ${{ secrets.ENV }}
+          INTEGRATION_IMAGE: ${{ needs.build-and-push.outputs.image }}
+          ECR_REGISTRY: ${{ needs.build-and-push.outputs.registry }}
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: 22
+          envs: DEPLOY_ENV_CONTENT,INTEGRATION_IMAGE,ECR_REGISTRY,AWS_REGION,DEPLOY_PATH
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_PATH"
+
+            # .env is never baked into the image; it is written on the host
+            # with owner-only permissions and read by compose at start.
+            umask 077
+            printf '%s\n' "$DEPLOY_ENV_CONTENT" > .env
+
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+            export INTEGRATION_IMAGE PULL_POLICY=always
+            docker compose pull
+
+            # Runs `migrate` first; the API starts only if migrations
+            # succeeded, and `up` fails the job if they did not.
+            if ! docker compose up -d --remove-orphans; then
+              echo "Deployment failed; migration output:"
+              docker compose logs --no-color --tail 100 migrate || true
+              exit 1
+            fi
+
+            for attempt in $(seq 1 30); do
+              status="$(docker inspect -f '{{.State.Health.Status}}' everycred-integration-api 2>/dev/null || echo missing)"
+              if [ "$status" = "healthy" ]; then
+                echo "API healthy: $INTEGRATION_IMAGE"
+                docker image prune -f >/dev/null
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "API did not become healthy; last logs:"
+            docker compose logs --no-color --tail 100 api || true
+            exit 1

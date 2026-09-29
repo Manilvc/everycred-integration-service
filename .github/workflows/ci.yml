@@ -1,0 +1,164 @@
+# Continuous integration for the integration service.
+#
+# Runs on every push and pull request, and is also called by the deploy
+# workflow so nothing reaches a server without passing it.
+
+name: CI
+
+on:
+  push:
+    # development is checked by the deploy workflow, which calls this one.
+    branches-ignore: [development]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the running check obsolete.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          # Same pin as the Dockerfile, so CI and the image resolve alike.
+          version: "0.9.7"
+          enable-cache: true
+
+      - name: Block committed .env files
+        # The image and the repository must never carry real settings.
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "::error::.env files must not be committed"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        # --frozen fails if uv.lock and pyproject.toml disagree.
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Tests
+        # The suite uses in-memory SQLite and mocked AWS; it needs no
+        # services and no secrets.
+        run: uv run pytest -q
+
+  migrations:
+    name: Migrations on MySQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        # Tests run on SQLite, so this is the only check that migrations
+        # apply to the MySQL the service actually runs on.
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: everycred_integration
+          MYSQL_USER: ci
+          # Throwaway credentials for this job's database only.
+          MYSQL_PASSWORD: ci-password
+          MYSQL_ROOT_PASSWORD: ci-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pci-root-password"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      DATABASE_URL: mysql+aiomysql://ci:ci-password@127.0.0.1:3306/everycred_integration?charset=utf8mb4
+      # Obviously fake values that only satisfy settings validation.
+      JWT_SECRET_KEY: ci-only-jwt-signing-key-not-a-secret-0000
+      API_KEY_HASH_SECRET: ci-only-api-key-hash-secret-not-real-0000
+      CONNECTION_ENCRYPTION_KEYS: Y2ktb25seS1mZXJuZXQta2V5LW5vdC1hLXNlY3JldCE=
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.7"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Upgrade to head
+        run: uv run alembic upgrade head
+
+      - name: Models match migrations
+        # Fails when a model changed without a migration.
+        run: uv run alembic check
+
+      - name: Downgrade to base and upgrade again
+        # Proves every downgrade works, so a bad release can be rolled back.
+        run: |
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+
+  image:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: |
+          touch .env
+          docker compose config --quiet
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: false
+          load: true
+          tags: everycred-integration-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the image
+        # Starts the real image with fake settings and checks liveness;
+        # no database is needed for /health/live.
+        run: |
+          docker run -d --name smoke -p 127.0.0.1:8030:8030 \
+            -e DATABASE_URL='mysql+aiomysql://x:x@127.0.0.1:3306/x' \
+            -e JWT_SECRET_KEY=ci-only-jwt-signing-key-not-a-secret-0000 \
+            -e API_KEY_HASH_SECRET=ci-only-api-key-hash-secret-not-real-0000 \
+            -e CONNECTION_ENCRYPTION_KEYS=Y2ktb25seS1mZXJuZXQta2V5LW5vdC1hLXNlY3JldCE= \
+            -e ROOT_PATH=/integration \
+            --read-only --tmpfs /tmp --cap-drop ALL \
+            everycred-integration-service:ci
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8030/health/live; then
+              echo; docker rm -f smoke >/dev/null; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::container did not become live"
+          docker logs smoke
+          exit 1
