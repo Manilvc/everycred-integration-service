@@ -12,7 +12,6 @@ import time
 import traceback
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -21,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.base import (
     ConnectionOutcome,
-    ConnectorContext,
     ConnectorError,
     IntegrationConnector,
     InvalidInputError,
@@ -44,7 +42,6 @@ from app.core.secret_store import SecretStore, SecretStoreError
 from app.features.client_integrations.repository import (
     ClientToolConnectionRepository,
 )
-from app.features.clients.exceptions import IntegrationNotEnabledError
 from app.features.clients.models import Client, ClientIntegrationConfig
 from app.features.clients.repository import (
     ClientIntegrationConfigRepository,
@@ -52,9 +49,6 @@ from app.features.clients.repository import (
 )
 from app.features.integration_tools.models import IntegrationTool
 from app.features.integration_tools.schemas import IntegrationToolSummary
-from app.features.integration_types.exceptions import (
-    IntegrationTypeNotFoundError,
-)
 from app.features.integration_types.models import IntegrationType
 from app.features.integration_types.repository import (
     IntegrationTypeRepository,
@@ -62,16 +56,10 @@ from app.features.integration_types.repository import (
 from app.features.user_connections.exceptions import (
     ConnectionFailedError,
     ConnectionNotFoundError,
-    ConnectorNotAvailableError,
-    IntegrationToolDisabledError,
-    IntegrationToolInactiveError,
-    IntegrationToolNotSelectedError,
     InvalidConnectionParametersError,
     InvalidInputsError,
-    MissingInputsError,
     OperationFailedError,
     OperationNotFoundError,
-    ToolCredentialsMissingError,
 )
 from app.features.user_connections.models import (
     LAST_ERROR_MAX_LENGTH,
@@ -88,6 +76,11 @@ from app.features.user_connections.schemas import (
     OperationResultResponse,
     ParameterSummary,
     UserConnectionResponse,
+)
+from app.features.user_connections.targets import (
+    IntegrationTarget,
+    IntegrationTargetResolver,
+    missing_inputs_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,16 +101,6 @@ def connection_secret_name(
         f"clients/{client_id}/users/{user_uuid}/connections/"
         f"{integration_type_code}"
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _Callable:
-    """Everything needed to call a tool for one client and user."""
-
-    integration_type: IntegrationType
-    client_config: ClientIntegrationConfig
-    tool: IntegrationTool
-    connector_class: type[IntegrationConnector]
 
 
 class UserConnectionService:
@@ -158,6 +141,15 @@ class UserConnectionService:
         self.secret_store = secret_store
         self.http_client = http_client
         self.settings = settings
+        self.targets = IntegrationTargetResolver(
+            integration_types=integration_types,
+            client_configs=client_configs,
+            tool_connections=tool_connections,
+            credentials=credentials,
+            secret_store=secret_store,
+            registry=registry,
+            http_client=http_client,
+        )
 
     async def list_connections(
         self, client: Client, user_uuid: uuid.UUID
@@ -476,28 +468,12 @@ class UserConnectionService:
         return self.settings.connector_timeout_seconds
 
     async def _build_connector(
-        self, target: _Callable, client: Client, user_uuid: uuid.UUID
+        self,
+        target: IntegrationTarget,
+        client: Client,
+        user_uuid: uuid.UUID,
     ) -> IntegrationConnector:
-        return target.connector_class(
-            ConnectorContext(
-                client_id=client.id,
-                user_uuid=user_uuid,
-                integration_type_code=target.integration_type.code,
-                tool_code=target.tool.code,
-                client_settings=target.client_config.settings,
-                http_client=self.http_client,
-                credentials=await self._load_credentials(client, target.tool),
-                tool_config=target.tool.connector_config,
-            )
-        )
-
-    async def _load_credentials(
-        self, client: Client, tool: IntegrationTool
-    ) -> dict[str, Any]:
-        credential = await self.credentials.get(client.id, tool.id)
-        if credential is None:
-            return {}
-        return await self.secret_store.read(credential.secret_reference)
+        return await self.targets.build_connector(target, client, user_uuid)
 
     async def _run_connector(
         self,
@@ -567,7 +543,7 @@ class UserConnectionService:
         *,
         client: Client,
         user_uuid: uuid.UUID,
-        target: _Callable,
+        target: IntegrationTarget,
         operation: str,
         outcome: OperationOutcome | None,
         failure: AppError | None,
@@ -603,14 +579,7 @@ class UserConnectionService:
     def _missing_inputs_error(
         tool_code: str, exc: MissingParametersError
     ) -> AppError:
-        missing_credentials = [
-            name.removeprefix("credentials.")
-            for name in exc.missing
-            if name.startswith("credentials.")
-        ]
-        if missing_credentials:
-            return ToolCredentialsMissingError(tool_code, missing_credentials)
-        return MissingInputsError(exc.missing)
+        return missing_inputs_error(tool_code, exc)
 
     def _raise_if_arguments_do_not_fit(
         self,
@@ -625,46 +594,17 @@ class UserConnectionService:
             )
 
     async def _get_integration_type(self, code: str) -> IntegrationType:
-        integration_type = await self.integration_types.get_by_code(code)
-        if integration_type is None:
-            raise IntegrationTypeNotFoundError(code)
-        return integration_type
+        return await self.targets.integration_type(code)
 
     async def _get_enabled_integration(
         self, client: Client, code: str
     ) -> tuple[IntegrationType, ClientIntegrationConfig]:
-        integration_type = await self._get_integration_type(code)
-        client_config = await self.client_configs.get(
-            client.id, integration_type.id
-        )
-        if (
-            client_config is None
-            or not client_config.is_enabled
-            or not integration_type.is_active
-        ):
-            raise IntegrationNotEnabledError(code)
-        return integration_type, client_config
+        return await self.targets.enabled_integration(client, code)
 
-    async def _get_callable(self, client: Client, code: str) -> _Callable:
-        integration_type, client_config = await self._get_enabled_integration(
-            client, code
-        )
-        tool = client_config.integration_tool
-        if tool is None:
-            raise IntegrationToolNotSelectedError(code)
-        if not tool.is_active:
-            raise IntegrationToolInactiveError(tool.code)
-        tool_connection = await self.tool_connections.get(client.id, tool.id)
-        if tool_connection is not None and not tool_connection.is_enabled:
-            raise IntegrationToolDisabledError(tool.code)
-        connector_class = resolve_connector(
-            tool.code, tool.connector_config, self.registry
-        )
-        if connector_class is None:
-            raise ConnectorNotAvailableError(tool.code)
-        return _Callable(
-            integration_type, client_config, tool, connector_class
-        )
+    async def _get_callable(
+        self, client: Client, code: str
+    ) -> IntegrationTarget:
+        return await self.targets.resolve(client, code)
 
     async def _get_connection_or_raise(
         self,

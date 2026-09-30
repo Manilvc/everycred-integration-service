@@ -63,6 +63,18 @@ uv run fastapi run --workers 4
 - Set `ENVIRONMENT=production` and `LOG_JSON=true`, and run it behind a
   reverse proxy or load balancer that terminates TLS.
 
+### Background worker
+
+Sessions expire, webhooks are delivered, and stored results are
+deleted by a separate process. Run exactly one next to the API:
+
+```bash
+uv run python -m app.worker
+```
+
+Without it, sessions still work (polling expires them), but no webhook
+is sent and results are not deleted on time.
+
 ### Check it is running
 
 | URL | Expected |
@@ -87,7 +99,7 @@ The service is deployed as a container behind the shared backend domain at
 
 ```bash
 docker compose build
-docker compose up -d        # runs migrations, then starts the API on 127.0.0.1:8030
+docker compose up -d        # runs migrations, then the API on 127.0.0.1:8030 and the worker
 ```
 
 Then add the nginx location from `deploy/nginx/integration-subpath.conf`.
@@ -100,6 +112,7 @@ Merges to `development` deploy automatically: see [docs/cicd.md](docs/cicd.md).
 |------------------|--------------------------------------|
 | Start (dev)      | `uv run fastapi dev`                 |
 | Start (prod)     | `uv run fastapi run --workers 4`     |
+| Start worker     | `uv run python -m app.worker`        |
 | Run tests        | `uv run pytest`                      |
 | Lint             | `uv run ruff check .`                |
 | Format           | `uv run ruff format .`               |

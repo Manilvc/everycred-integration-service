@@ -147,12 +147,13 @@ The container uses the standard AWS credential chain.
 ```bash
 docker compose build
 docker compose up -d
-docker compose ps           # migrate: Exited (0), api: Up (healthy)
+docker compose ps           # migrate: Exited (0), api: Up (healthy), worker: Up (healthy)
 docker compose logs -f api
 ```
 
-`migrate` applies every pending Alembic migration and exits; `api` starts
-only if it succeeded. The API listens on `127.0.0.1:8030`, so it is not
+`migrate` applies every pending Alembic migration and exits; `api` and
+`worker` start only if it succeeded. `worker` delivers webhooks, expires
+sessions and deletes expired results; keep exactly one running. The API listens on `127.0.0.1:8030`, so it is not
 reachable from outside the host except through nginx.
 
 Check locally on the server:
@@ -214,6 +215,7 @@ leave the schema partly changed. Take a database backup first.
 | Task | Command |
 |------|---------|
 | Logs | `docker compose logs -f api` (JSON lines when `LOG_JSON=true`) |
+| Worker logs | `docker compose logs -f worker` |
 | Restart | `docker compose restart api` |
 | Current migration | `docker compose run --rm migrate alembic current` |
 | Shell in a new container | `docker compose run --rm api sh` |

@@ -11,9 +11,12 @@ import inspect
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from app.connectors.http.config import FlowConfig
 
 
 class ConnectorError(Exception):
@@ -73,6 +76,7 @@ class ConnectorContext:
             so the context can never leak them into logs.
         tool_config: The tool's ``connector_config`` from the database,
             used by configuration-driven connectors.
+        session_values: Values captured by earlier steps of a flow.
         http_client: Shared outbound HTTP client with timeouts applied.
     """
 
@@ -84,6 +88,8 @@ class ConnectorContext:
     http_client: httpx.AsyncClient = field(repr=False)
     credentials: dict[str, Any] = field(default_factory=dict, repr=False)
     tool_config: dict[str, Any] | None = field(default=None, repr=False)
+    # Values earlier flow steps captured, read as {session.<name>}.
+    session_values: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +227,17 @@ class IntegrationConnector(ABC):
     ) -> list[OperationDescription]:
         """List the operations this connector offers for ``tool_config``."""
         return []
+
+    @classmethod
+    def describe_flows(
+        cls, tool_config: dict[str, Any] | None
+    ) -> dict[str, "FlowConfig"]:
+        """Return the verification and gather flows this tool offers.
+
+        Flows are sequences of operations, so only connectors with
+        operations can offer them. The default offers none.
+        """
+        return {}
 
     @abstractmethod
     async def connect(self, *args: Any, **kwargs: Any) -> ConnectionOutcome:

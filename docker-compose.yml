@@ -8,6 +8,7 @@
 #
 #   docker compose build
 #   docker compose up -d          # runs migrations first, then the API
+#                                 # and the background worker
 #   docker compose logs -f api
 
 name: everycred-integration
@@ -86,3 +87,29 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 5
+
+  # Webhook delivery, session expiry, and purging of expired results.
+  # Exactly one instance: deliveries are not locked across processes.
+  worker:
+    <<: *service-defaults
+    container_name: everycred-integration-worker
+    command: ["worker"]
+    # Same image as `api`, which builds it.
+    pull_policy: ${PULL_POLICY:-never}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      api:
+        condition: service_started
+    restart: always
+    # The image's check calls the HTTP API, which the worker does not
+    # serve; this one checks that a worker round succeeded recently.
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    mem_limit: 256m
+    cpus: "0.5"
+    stop_grace_period: 30s

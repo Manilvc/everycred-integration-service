@@ -105,6 +105,22 @@ class Settings(BaseSettings):
     # Deleted secrets stay recoverable for this long (AWS allows 7-30).
     secret_recovery_window_days: int = Field(default=7, ge=7, le=30)
 
+    # Verification and gather sessions. A session not finished within the
+    # TTL expires (its inputs, e.g. an OTP, are deleted). Results are kept
+    # encrypted for the retention window, then deleted automatically.
+    session_ttl_minutes: int = Field(default=30, ge=1, le=1440)
+    session_data_retention_days: int = Field(default=7, ge=1, le=90)
+
+    # Webhooks telling clients a session finished. Private and loopback
+    # addresses are refused unless explicitly allowed, so a client cannot
+    # make this service call internal systems.
+    webhook_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    webhook_max_attempts: int = Field(default=8, ge=1, le=20)
+    webhook_allow_private_networks: bool = False
+
+    # Background worker: webhook delivery, session expiry, data purge.
+    worker_interval_seconds: float = Field(default=5.0, gt=0, le=300)
+
     @field_validator("connection_encryption_keys")
     @classmethod
     def check_encryption_keys(cls, keys: SecretStr) -> SecretStr:

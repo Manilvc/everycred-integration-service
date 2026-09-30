@@ -4,6 +4,8 @@
 #   serve    Run the API with uvicorn (default).
 #   migrate  Wait for the database (explaining any failure in plain words),
 #            apply Alembic migrations, then exit.
+#   worker   Run the background worker: webhook delivery, session expiry,
+#            and deletion of expired session results. Run exactly one.
 #   *        Run the given command as-is (for example `sh` when debugging).
 #
 # Settings for `serve`:
@@ -35,6 +37,9 @@ case "${1:-serve}" in
     migrate)
         python -m app.core.db_check
         exec alembic upgrade head
+        ;;
+    worker)
+        exec python -m app.worker
         ;;
     *)
         exec "$@"
