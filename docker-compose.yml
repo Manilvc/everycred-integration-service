@@ -102,6 +102,14 @@ services:
       api:
         condition: service_started
     restart: always
+    # The image's check calls the HTTP API, which the worker does not
+    # serve; this one checks that a worker round succeeded recently.
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     mem_limit: 256m
     cpus: "0.5"
     stop_grace_period: 30s

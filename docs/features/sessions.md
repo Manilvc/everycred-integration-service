@@ -191,7 +191,10 @@ Polling `GET /client/sessions/{id}` works without a webhook.
 2. delivers due webhook events with retries,
 3. deletes results past retention.
 
-Run exactly one worker per deployment.
+Run exactly one worker per deployment. After each successful round it
+touches a heartbeat file in `/tmp`; the compose health check
+(`python -m app.worker --check`) marks the container unhealthy when no
+round has succeeded for 2 minutes, e.g. while the database is down.
 
 ## Settings
 

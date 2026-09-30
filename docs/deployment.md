@@ -147,7 +147,7 @@ The container uses the standard AWS credential chain.
 ```bash
 docker compose build
 docker compose up -d
-docker compose ps           # migrate: Exited (0), api: Up (healthy), worker: Up
+docker compose ps           # migrate: Exited (0), api: Up (healthy), worker: Up (healthy)
 docker compose logs -f api
 ```
 

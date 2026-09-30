@@ -12,6 +12,11 @@ Every ``WORKER_INTERVAL_SECONDS`` it
    backoff, and
 3. deletes session results whose retention window has ended.
 
+After each successful round it touches :data:`HEARTBEAT_FILE`; the
+container health check (``python -m app.worker --check``) reports
+unhealthy when the file is older than :data:`HEARTBEAT_MAX_AGE_SECONDS`,
+for example because the database has been unreachable for a while.
+
 Deliveries are not locked between processes, so running two workers at
 once could send an event twice. Receivers should still treat the
 ``X-EveryCRED-Delivery`` id as idempotency key, as retries after a lost
@@ -21,7 +26,11 @@ response can repeat an event anyway.
 import asyncio
 import logging
 import signal
+import sys
+import tempfile
+import time
 from contextlib import suppress
+from pathlib import Path
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -41,6 +50,9 @@ from app.features.sessions.dependencies import (
 logger = logging.getLogger("app.worker")
 
 BATCH_SIZE = 50
+# /tmp is the only writable path in the read-only container.
+HEARTBEAT_FILE = Path(tempfile.gettempdir()) / "everycred-worker-heartbeat"
+HEARTBEAT_MAX_AGE_SECONDS = 120
 
 
 async def run_once(
@@ -94,6 +106,7 @@ async def run_forever(stop: asyncio.Event) -> None:
         while not stop.is_set():
             try:
                 done = await run_once(session_factory, http_client, settings)
+                HEARTBEAT_FILE.touch()
                 if any(done.values()):
                     logger.info("Worker round: %s", done)
             except Exception:
@@ -110,8 +123,24 @@ async def run_forever(stop: asyncio.Event) -> None:
         logger.info("Worker stopped")
 
 
+def is_healthy(now: float | None = None) -> bool:
+    """Return True if a round succeeded within the allowed age."""
+    try:
+        last_round = HEARTBEAT_FILE.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    current = time.time() if now is None else now
+    return current - last_round <= HEARTBEAT_MAX_AGE_SECONDS
+
+
 def main() -> None:
-    """Entry point: configure logging and stop cleanly on SIGTERM."""
+    """Entry point: configure logging and stop cleanly on SIGTERM.
+
+    With ``--check``, exit 0 or 1 by :func:`is_healthy` instead; used by
+    the container health check.
+    """
+    if "--check" in sys.argv[1:]:
+        sys.exit(0 if is_healthy() else 1)
     settings = get_settings()
     configure_logging(settings.log_level, use_json=settings.log_json)
 
