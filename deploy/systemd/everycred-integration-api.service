@@ -1,0 +1,53 @@
+# EveryCRED Integration Service - HTTP API, run directly on the host.
+#
+# Install: see docs/deployment.md ("Without Docker: systemd").
+# nginx proxies https://<domain>/integration/ to 127.0.0.1:8030 and strips
+# the prefix (deploy/nginx/integration-subpath.conf); --root-path tells the
+# app about it.
+#
+# Before every start, the database is checked and pending Alembic
+# migrations are applied; the API does not start if either fails.
+# Settings come from .env in WorkingDirectory.
+
+[Unit]
+Description=EveryCRED Integration Service - HTTP API (uvicorn)
+Wants=network-online.target
+After=network-online.target mysql.service
+
+[Service]
+Type=exec
+User=everycred-local
+Group=everycred-local
+WorkingDirectory=/var/www/everycred-integration-service
+Environment="PATH=/var/www/everycred-integration-service/.venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStartPre=/var/www/everycred-integration-service/.venv/bin/python -m app.core.db_check
+ExecStartPre=/var/www/everycred-integration-service/.venv/bin/alembic upgrade head
+ExecStart=/var/www/everycred-integration-service/.venv/bin/uvicorn \
+    app.main:app \
+    --host 127.0.0.1 \
+    --port 8030 \
+    --workers 2 \
+    --root-path /integration \
+    --proxy-headers \
+    --forwarded-allow-ips 127.0.0.1 \
+    --timeout-keep-alive 15 \
+    --timeout-graceful-shutdown 20 \
+    --no-server-header
+# The database check retries for up to 30 s, then migrations run.
+TimeoutStartSec=180
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=everycred-integration-api
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
