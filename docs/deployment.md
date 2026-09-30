@@ -119,10 +119,41 @@ printed.
 ### MySQL elsewhere (TCP)
 
 For MySQL on another machine, or when you prefer TCP to a local MySQL,
-use a normal host in `DATABASE_URL` (`host.docker.internal` for the Docker
-host). MySQL must listen beyond `127.0.0.1` (`bind-address`), the
-firewall must allow Docker's network (`172.16.0.0/12`) on 3306, and the
-account must exist for `'172.%'`.
+use a normal host in `DATABASE_URL`. For MySQL on the Docker host itself
+that host is `host.docker.internal`, which every service already maps to
+the host (`extra_hosts: host-gateway` in `docker-compose.yml`):
+
+```dotenv
+DATABASE_URL=mysql+aiomysql://everycred_integration:<password>@host.docker.internal:3306/everycred_integration?charset=utf8mb4
+```
+
+Ubuntu's MySQL accepts none of that by default. On the host:
+
+1. Listen on the Docker bridge as well as loopback (MySQL 8.0.13+
+   accepts a list). Find the bridge address with
+   `ip -4 addr show docker0`, usually `172.17.0.1`, then in
+   `/etc/mysql/mysql.conf.d/mysqld.cnf`:
+
+   ```ini
+   bind-address = 127.0.0.1,172.17.0.1
+   ```
+
+   and `sudo systemctl restart mysql`. Avoid `0.0.0.0`, which also
+   exposes MySQL on the public interface.
+
+2. Create the account for Docker's networks, not `localhost`:
+
+   ```sql
+   CREATE USER 'everycred_integration'@'172.16.0.0/255.240.0.0'
+     IDENTIFIED BY '<password>';
+   GRANT ALL PRIVILEGES ON everycred_integration.*
+     TO 'everycred_integration'@'172.16.0.0/255.240.0.0';
+   ```
+
+3. If ufw is active:
+   `sudo ufw allow from 172.16.0.0/12 to any port 3306 proto tcp`.
+
+Do not set `COMPOSE_FILE` to the socket override when using TCP.
 
 ### AWS credentials
 
@@ -153,8 +184,18 @@ docker compose logs -f api
 
 `migrate` applies every pending Alembic migration and exits; `api` and
 `worker` start only if it succeeded. `worker` delivers webhooks, expires
-sessions and deletes expired results; keep exactly one running. The API listens on `127.0.0.1:8030`, so it is not
-reachable from outside the host except through nginx.
+sessions and deletes expired results; keep exactly one running. The API
+listens on `127.0.0.1:8030`, so it is not reachable from outside the
+host except through nginx.
+
+If `migrate` exits with 1, `docker compose logs migrate` says why in
+plain words, without printing passwords or other `.env` values:
+
+- "The settings in .env are invalid": a setting is missing or wrong;
+  the line names it (for example `SECRET_STORE_BACKEND=aws` without
+  `AWS_REGION` and `SECRETS_KMS_KEY_ID`).
+- "Cannot reach the database": followed by the likely cause and fix
+  for the socket or TCP setup above.
 
 Check locally on the server:
 

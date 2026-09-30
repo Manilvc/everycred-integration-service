@@ -78,7 +78,8 @@ def test_missing_socket_is_reported_without_connecting(
     )
     db_check.get_settings.cache_clear()
     try:
-        assert db_check.wait_for_database(wait_seconds=0) is False
+        settings = db_check.get_settings()
+        assert db_check.wait_for_database(settings, wait_seconds=0) is False
     finally:
         db_check.get_settings.cache_clear()
 
@@ -96,5 +97,28 @@ def test_success_is_reported(
 
     monkeypatch.setattr(db_check, "_ping", reachable)
 
-    assert db_check.wait_for_database(wait_seconds=0) is True
+    settings = db_check.get_settings()
+    assert db_check.wait_for_database(settings, wait_seconds=0) is True
     assert "is reachable" in capsys.readouterr().err
+
+
+def test_invalid_settings_are_explained_without_values(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SECRET_STORE_BACKEND", "aws")
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("SECRETS_KMS_KEY_ID", raising=False)
+    monkeypatch.setenv(
+        "DATABASE_URL", "mysql+aiomysql://u:hunter2@10.0.0.5:3306/db"
+    )
+    db_check.get_settings.cache_clear()
+    try:
+        assert db_check.main() == 1
+    finally:
+        db_check.get_settings.cache_clear()
+
+    output = capsys.readouterr().err
+    assert "The settings in .env are invalid" in output
+    assert "AWS_REGION and SECRETS_KMS_KEY_ID are required" in output
+    assert "hunter2" not in output
+    assert "Traceback" not in output

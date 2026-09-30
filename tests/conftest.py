@@ -18,6 +18,8 @@ os.environ["CONNECTION_ENCRYPTION_KEYS"] = (
 )
 os.environ["CONNECTOR_TIMEOUT_SECONDS"] = "0.5"
 os.environ["LOG_JSON"] = "false"
+os.environ["SECRET_STORE_BACKEND"] = "local"
+os.environ["ENVIRONMENT"] = "local"
 
 import pytest  # noqa: E402
 from asgi_lifespan import LifespanManager  # noqa: E402

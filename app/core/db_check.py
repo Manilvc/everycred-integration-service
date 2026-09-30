@@ -5,7 +5,12 @@ while, because MySQL may still be starting when the containers come up
 after a reboot, and on failure prints what went wrong and how to fix it
 instead of a driver traceback. The password is never printed.
 
-Exit code 0 means the database answered; 1 means it did not.
+Invalid settings are reported the same way, one line per problem,
+because pydantic's own message echoes the raw ``.env`` values, secrets
+included.
+
+Exit code 0 means the database answered; 1 means it did not, or the
+settings are invalid.
 """
 
 import asyncio
@@ -13,13 +18,14 @@ import os
 import sys
 import time
 
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
 DEFAULT_WAIT_SECONDS = 30
 RETRY_DELAY_SECONDS = 2
@@ -145,9 +151,26 @@ def _check_socket(url: URL) -> None:
         raise _SocketMissingError(f"socket {socket_path} not found")
 
 
-def wait_for_database(wait_seconds: float) -> bool:
+def load_settings() -> Settings | None:
+    """Return the settings, or print why they are invalid and return None."""
+    try:
+        return get_settings()
+    except ValidationError as exc:
+        print("\nThe settings in .env are invalid:", file=sys.stderr)
+        for error in exc.errors(include_input=False, include_url=False):
+            field = ".".join(str(part) for part in error["loc"]).upper()
+            reason = error["msg"].removeprefix("Value error, ")
+            print(f"  -> {field or 'SETTINGS'}: {reason}", file=sys.stderr)
+        print(
+            "\nFix .env (see .env.example) and start the containers again.",
+            file=sys.stderr,
+        )
+        return None
+
+
+def wait_for_database(settings: Settings, wait_seconds: float) -> bool:
     """Try to connect until success or ``wait_seconds`` pass."""
-    url = make_url(get_settings().database_url.get_secret_value())
+    url = make_url(settings.database_url.get_secret_value())
     target = _target(url)
     deadline = time.monotonic() + wait_seconds
     attempt = 0
@@ -183,7 +206,10 @@ def main() -> int:
     wait_seconds = float(
         os.environ.get("DB_WAIT_SECONDS", DEFAULT_WAIT_SECONDS)
     )
-    return 0 if wait_for_database(wait_seconds) else 1
+    settings = load_settings()
+    if settings is None:
+        return 1
+    return 0 if wait_for_database(settings, wait_seconds) else 1
 
 
 if __name__ == "__main__":
