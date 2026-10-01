@@ -10,7 +10,7 @@ import asyncio
 import logging
 import traceback
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 import httpx
@@ -274,7 +274,11 @@ class ClientIntegrationService:
         )
 
     async def list_user_integrations(
-        self, client: Client, user_uuid: uuid.UUID
+        self,
+        client: Client,
+        user_uuid: uuid.UUID,
+        *,
+        statuses: Collection[UserIntegrationStatus] | None = None,
     ) -> UserIntegrationsListingResponse:
         """Return every active type with the user's status for each tool.
 
@@ -282,6 +286,12 @@ class ClientIntegrationService:
         to, so each group lists that tool (if the type is enabled and a
         tool is chosen) and any built-in tools. Works for users this
         service has never seen: they are simply not connected yet.
+
+        Args:
+            client: The calling client.
+            user_uuid: The client's id for the user.
+            statuses: Keep only systems with these statuses, e.g.
+                ``{connected}``. Groups are always all listed.
         """
         catalogue = await self._load_catalogue(client)
         connection_by_type_id = {
@@ -303,6 +313,10 @@ class ClientIntegrationService:
                 for state in catalogue.states_for(integration_type)
                 if state.is_built_in or state.tool.id == chosen_tool_id
             ]
+            if statuses:
+                systems = [
+                    system for system in systems if system.status in statuses
+                ]
             groups.append(
                 UserIntegrationGroup(
                     id=integration_type.id,
