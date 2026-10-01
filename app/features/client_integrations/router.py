@@ -175,10 +175,11 @@ async def list_user_integrations(
 ) -> UserIntegrationsListingResponse:
     """Return the tools the user is connected to, grouped by type.
 
-    By default only `connected` systems are returned: the tool the client
-    routes a type through, once the user has connected to it, and
-    built-in tools such as the Holder Wallet App. Every group is listed,
-    with an empty `systems` list where the user has nothing connected.
+    By default only `connected` systems are returned: tools the user has
+    a successful connection to (`PUT` then `POST .../connect` under
+    `/client/users/{user_uuid}/connections`). Built-in tools such as the
+    Holder Wallet App follow the same rule. Every group is listed, with
+    an empty `systems` list where the user has nothing connected.
 
     Ask for other statuses with `status` (repeatable): `pending`,
     `failed`, `not_connected`, or `unavailable` (the client has the tool

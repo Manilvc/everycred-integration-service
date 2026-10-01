@@ -554,8 +554,40 @@ async def test_unknown_user_sees_routed_tool_and_built_ins(
     assert (idme["status"], idme["is_active"]) == ("unavailable", False)
     assert idme["tool_status"] == "available"
     assert idme["connection_id"] is None
+    # Built in, but the user has no connection to it.
     wallet = systems["declare"]["holder-wallet-app"]
-    assert (wallet["status"], wallet["is_connected"]) == ("connected", True)
+    assert (wallet["status"], wallet["is_connected"]) == (
+        "not_connected",
+        False,
+    )
+
+
+async def test_built_in_tool_is_listed_once_the_user_connects(
+    client: AsyncClient, setup: dict, super_admin_headers: dict[str, str]
+) -> None:
+    enabled = await client.put(
+        f"/api/v1/clients/{setup['client_id']}/integrations/declare",
+        json={"tool_code": "holder-wallet-app"},
+        headers=super_admin_headers,
+    )
+    assert enabled.status_code == 200, enabled.text
+    before = await client.get(user_url(), headers=setup["key"])
+    await client.put(
+        f"/api/v1/client/users/{USER}/connections/declare",
+        json={},
+        headers=setup["key"],
+    )
+    connected = await client.post(
+        f"/api/v1/client/users/{USER}/connections/declare/connect",
+        headers=setup["key"],
+    )
+    after = await client.get(user_url(), headers=setup["key"])
+
+    assert connected.status_code == 200, connected.text
+    assert systems_by_key(before.json())["declare"] == {}
+    wallet = systems_by_key(after.json())["declare"]["holder-wallet-app"]
+    assert wallet["status"] == "connected"
+    assert wallet["connection_id"] is not None
 
 
 async def test_user_status_follows_the_connection(
@@ -641,12 +673,12 @@ async def test_only_connected_tools_are_returned_by_default(
         user_url(), params={"status": "connected"}, headers=setup["key"]
     )
 
-    # No connection yet: ID.me is left out; only the built-in wallet is
-    # connected. Every group is still listed.
+    # No connection yet: nothing is listed, the built-in wallet
+    # included. Every group is still listed.
     assert {
         key: list(systems)
         for key, systems in systems_by_key(before.json()).items()
-    } == {"confirm": [], "gather": [], "declare": ["holder-wallet-app"]}
+    } == {"confirm": [], "gather": [], "declare": []}
     assert list(systems_by_key(after.json())["confirm"]) == ["idme"]
     assert explicit.json() == after.json()
 
@@ -662,7 +694,7 @@ async def test_status_filter_accepts_several_statuses(
 
     systems = systems_by_key(response.json())
     assert list(systems["confirm"]) == ["idme"]
-    assert systems["declare"] == {}
+    assert list(systems["declare"]) == ["holder-wallet-app"]
 
 
 async def test_unknown_status_filter_is_rejected(

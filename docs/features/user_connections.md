@@ -91,7 +91,7 @@ built-in tools such as the Holder Wallet App.
 |----------|---------|
 | `not_connected` | No connection saved for this type yet |
 | `pending` | Parameters saved, not connected since |
-| `connected` | The last connection attempt succeeded (built-in tools are always connected) |
+| `connected` | The user's last connection attempt succeeded |
 | `failed` | The last attempt failed; see `last_error` |
 | `unavailable` | The user cannot connect: the client has the tool switched off, has not stored its credentials, or no connector is installed |
 
@@ -105,8 +105,11 @@ built-in tools such as the Holder Wallet App.
 - Any `user_uuid` is accepted; a user never seen before is
   `not_connected` everywhere.
 - By default only `connected` systems are returned: tools the user has
-  connected to, and built-in tools. All groups are still listed; those
-  with nothing connected have an empty `systems` list.
+  a connection to (a row in `user_integration_connections` with status
+  `connected`). Built-in tools such as the Holder Wallet App follow the
+  same rule; the client's own screen still shows them as connected. All
+  groups are still listed; those with nothing connected have an empty
+  `systems` list.
 - Other statuses are returned only when asked for with `status`
   (repeatable), e.g. `?status=not_connected&status=pending` for tools
   the user has not finished connecting.

@@ -700,13 +700,10 @@ class ClientIntegrationService:
         integration_type: IntegrationType,
         connection: UserIntegrationConnection | None,
     ) -> UserIntegrationSystem:
-        # A built-in tool has no per-user connection to report.
-        if state.is_built_in:
-            connection = None
+        # Built-in tools are no exception: a user is connected only once
+        # they have a connection of their own.
         if not state.is_usable_by_users:
             status = UserIntegrationStatus.UNAVAILABLE
-        elif state.is_built_in:
-            status = UserIntegrationStatus.CONNECTED
         elif connection is None:
             status = UserIntegrationStatus.NOT_CONNECTED
         else:
