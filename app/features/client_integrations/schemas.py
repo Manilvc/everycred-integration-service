@@ -1,8 +1,10 @@
 """Request and response models for the client Integrations screen."""
 
 import re
+import uuid
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -18,6 +20,7 @@ MAX_MAPPINGS_PER_FLOW = 100
 _ATTRIBUTE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 # A dot path into the provider's data, or session.<captured value>.
 _MAPPING_PATH_PATTERN = r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){0,15}$"
+LISTING_MESSAGE = "Integrations retrieved successfully."
 
 
 class CardStatus(StrEnum):
@@ -51,34 +54,69 @@ class IntegrationTypeInfo(BaseModel):
     description: str | None
 
 
-class ToolCard(BaseModel):
-    """One tool card inside an integration type group.
+class IntegrationSystem(BaseModel):
+    """One tool ("system") inside an integration type group.
+
+    Field names follow the EveryCRED Integrations screen, so its
+    frontend can render this response as it renders its own.
 
     Attributes:
-        is_default: This tool is the one the client's users are routed
-            through for the type (chosen by a super admin).
+        id: The tool's id.
+        code: The tool's code, used by the drawer, Save, and Test
+            connection endpoints.
+        source_role_id: Id of the integration type (group) it is listed
+            under.
+        status_note: Short subtitle under the name; the tool's
+            description.
+        is_connected: The last Test connection succeeded, or the tool is
+            built in.
+        is_active: The tool is switched on for the client.
+        is_default: Built in to EveryCRED, or the tool the client's
+            users are routed through for this type.
+        last_tested_at: When Test connection last ran, if ever.
     """
 
+    id: uuid.UUID
     code: str
+    source_role_id: uuid.UUID
     name: str
-    provider: str | None
-    status: CardStatus
-    is_enabled: bool
+    status_note: str | None
+    is_connected: bool
+    is_active: bool
     is_default: bool
+    status: CardStatus
     last_tested_at: datetime | None
 
 
 class IntegrationGroup(BaseModel):
-    """Tools available to the client for one integration type."""
+    """One integration type and the client's systems for it.
 
-    integration_type: IntegrationTypeInfo
-    tools: list[ToolCard]
+    Attributes:
+        id: The integration type's id.
+        key: The integration type's code, e.g. ``confirm``.
+        label: ``"<NAME> - <description>"``, e.g.
+            ``"CONFIRM - Identity & verification"``.
+    """
+
+    id: uuid.UUID
+    key: str
+    label: str
+    description: str | None
+    systems: list[IntegrationSystem]
 
 
-class ClientIntegrationsResponse(BaseModel):
-    """Everything the Integrations screen shows, grouped by type."""
+class IntegrationsListing(BaseModel):
+    """Every active integration type, in display order."""
 
     groups: list[IntegrationGroup]
+
+
+class IntegrationsListingResponse(BaseModel):
+    """The Integrations screen, wrapped like EveryCRED's own responses."""
+
+    status: Literal["success"] = "success"
+    data: IntegrationsListing
+    message: str = LISTING_MESSAGE
 
 
 class ToolConnectionDetail(BaseModel):

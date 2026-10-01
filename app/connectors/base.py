@@ -11,7 +11,7 @@ import inspect
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 
@@ -180,7 +180,15 @@ class IntegrationConnector(ABC):
     example ``async def connect(self, api_token: str, *, region: str)``.
     The declared signature is what stored ``args`` and ``kwargs`` are
     checked against before the connector is ever called.
+
+    Attributes:
+        is_built_in: True for tools EveryCRED provides itself, such as
+            the holder wallet. They need no credentials or setup, are
+            listed for every client, and show as connected unless the
+            client switches them off.
     """
+
+    is_built_in: ClassVar[bool] = False
 
     def __init__(self, context: ConnectorContext) -> None:
         self.context = context

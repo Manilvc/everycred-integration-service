@@ -28,6 +28,19 @@ class IntegrationTypeRepository:
         )
         return integration_types.all()
 
+    async def list_active(self) -> Sequence[IntegrationType]:
+        """Return every active type in display order."""
+        integration_types = await self.session.scalars(
+            select(IntegrationType)
+            .where(IntegrationType.is_active)
+            .order_by(
+                IntegrationType.display_order,
+                IntegrationType.name,
+                IntegrationType.id,
+            )
+        )
+        return integration_types.all()
+
     async def list_page(
         self, *, include_inactive: bool, limit: int, offset: int
     ) -> tuple[Sequence[IntegrationType], int]:

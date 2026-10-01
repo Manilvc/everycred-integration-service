@@ -154,6 +154,14 @@ Checked when the tool is saved: every operation exists; every
 every `{session.x}` and `session.` output is captured by an earlier
 step; flows do not use `{args.N}`; headers never use `{session.*}`.
 
+### Built-in tools
+
+A Python connector can set `is_built_in = True` for a tool EveryCRED
+provides itself (see `app/connectors/holder_wallet_app.py`). The
+Integrations screen then lists it for every client as connected, with
+no credentials to store; see
+[client integrations](features/client_integrations.md#built-in-tools).
+
 ## Python connectors
 
 ### 1. Create the module

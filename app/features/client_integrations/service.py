@@ -41,11 +41,12 @@ from app.features.client_integrations.repository import (
 )
 from app.features.client_integrations.schemas import (
     CardStatus,
-    ClientIntegrationsResponse,
     ConnectionTestResponse,
     IntegrationGroup,
+    IntegrationsListing,
+    IntegrationsListingResponse,
+    IntegrationSystem,
     IntegrationTypeInfo,
-    ToolCard,
     ToolConnectionDetail,
     ToolConnectionUpdate,
 )
@@ -67,6 +68,9 @@ from app.features.integration_tools.repository import (
     IntegrationToolRepository,
 )
 from app.features.integration_types.models import IntegrationType
+from app.features.integration_types.repository import (
+    IntegrationTypeRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,21 @@ class UnknownFlowsError(AppError):
         super().__init__(
             f"Tool '{tool_code}' has no flows named: " + ", ".join(flows)
         )
+
+
+# Statuses shown as connected (green dot) on the Integrations screen.
+# ``configured`` means Test connection confirmed stored credentials for a
+# tool that cannot be called without a user.
+_CONNECTED_STATUSES = {CardStatus.CONNECTED, CardStatus.CONFIGURED}
+BUILT_IN_TEST_MESSAGE = "Built in to EveryCRED; there is nothing to connect."
+
+
+def group_label(integration_type: IntegrationType) -> str:
+    """Return ``"CONFIRM - Identity & verification"`` style labels."""
+    name = integration_type.name.upper()
+    if integration_type.description:
+        return f"{name} - {integration_type.description}"
+    return name
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +133,10 @@ class _ToolState:
         return sorted(set(required) - set(self.stored_credentials))
 
     @property
+    def is_built_in(self) -> bool:
+        return bool(self.connector_class and self.connector_class.is_built_in)
+
+    @property
     def is_enabled(self) -> bool:
         # Without a row, a tool is in effect on when users could use it:
         # its credentials are stored (setups made through the super
@@ -131,6 +154,8 @@ class _ToolState:
             return CardStatus.UNAVAILABLE
         if self.connection is not None and not self.connection.is_enabled:
             return CardStatus.DISABLED
+        if self.is_built_in:
+            return CardStatus.CONNECTED
         if self.connection is None and self.credential is None:
             return CardStatus.AVAILABLE
         if self.missing_credentials:
@@ -147,6 +172,7 @@ class ClientIntegrationService:
         self,
         session: AsyncSession,
         configs: ClientIntegrationConfigRepository,
+        integration_types: IntegrationTypeRepository,
         tools: IntegrationToolRepository,
         credentials: ClientToolCredentialRepository,
         connections: ClientToolConnectionRepository,
@@ -157,6 +183,7 @@ class ClientIntegrationService:
     ) -> None:
         self.session = session
         self.configs = configs
+        self.integration_types = integration_types
         self.tools = tools
         self.credentials = credentials
         self.connections = connections
@@ -167,48 +194,57 @@ class ClientIntegrationService:
 
     async def list_integrations(
         self, client: Client
-    ) -> ClientIntegrationsResponse:
-        """Return the client's enabled types, each with its tools."""
-        enabled = await self._enabled_types(client)
+    ) -> IntegrationsListingResponse:
+        """Return every active type with the client's systems for it.
+
+        A type the client has not enabled is still listed, so the screen
+        always shows the same groups, but only with built-in systems.
+        """
+        integration_types = await self.integration_types.list_active()
+        config_by_type_id = {
+            integration_type.id: config
+            for config, integration_type in await self._enabled_types(client)
+        }
         tools = await self.tools.list_active_for_types(
-            [integration_type.id for _, integration_type in enabled]
+            [integration_type.id for integration_type in integration_types]
         )
         connections = await self.connections.by_tool_for_client(client.id)
         credentials = await self.credentials.by_tool_for_client(client.id)
 
         groups = []
-        for config, integration_type in enabled:
-            cards = []
+        for integration_type in integration_types:
+            config = config_by_type_id.get(integration_type.id)
+            systems = []
             for tool in tools:
                 if not tool.serves(integration_type.id):
                     continue
                 state = self._state(
                     tool, connections.get(tool.id), credentials.get(tool.id)
                 )
-                cards.append(
-                    ToolCard(
-                        code=tool.code,
-                        name=tool.name,
-                        provider=tool.provider,
-                        status=state.card_status,
-                        is_enabled=state.is_enabled,
-                        is_default=config.integration_tool_id == tool.id,
-                        last_tested_at=(
-                            state.connection.last_tested_at
-                            if state.connection
-                            else None
+                if config is None and not state.is_built_in:
+                    continue
+                systems.append(
+                    self._to_system(
+                        state,
+                        integration_type,
+                        is_chosen=(
+                            config is not None
+                            and config.integration_tool_id == tool.id
                         ),
                     )
                 )
             groups.append(
                 IntegrationGroup(
-                    integration_type=IntegrationTypeInfo.model_validate(
-                        integration_type
-                    ),
-                    tools=cards,
+                    id=integration_type.id,
+                    key=integration_type.code,
+                    label=group_label(integration_type),
+                    description=integration_type.description,
+                    systems=systems,
                 )
             )
-        return ClientIntegrationsResponse(groups=groups)
+        return IntegrationsListingResponse(
+            data=IntegrationsListing(groups=groups)
+        )
 
     async def get_tool(
         self, client: Client, tool_code: str
@@ -298,9 +334,16 @@ class ClientIntegrationService:
                 tested_at=tested_at,
             )
 
-        success, called_provider, message = await self._run_test(
-            client, tool, state, enabled
-        )
+        if state.is_built_in:
+            success, called_provider, message = (
+                True,
+                False,
+                BUILT_IN_TEST_MESSAGE,
+            )
+        else:
+            success, called_provider, message = await self._run_test(
+                client, tool, state, enabled
+            )
         if success:
             status = (
                 ToolConnectionStatus.CONNECTED
@@ -476,9 +519,12 @@ class ClientIntegrationService:
         if (
             tool is None
             or not tool.is_active
-            or not any(
-                tool.serves(integration_type.id)
-                for _, integration_type in enabled
+            or not (
+                self._is_built_in(tool)
+                or any(
+                    tool.serves(integration_type.id)
+                    for _, integration_type in enabled
+                )
             )
         ):
             # Tools outside the client's scope look the same as missing
@@ -511,6 +557,35 @@ class ClientIntegrationService:
         )
         return _ToolState(
             tool, connector_class, requirements, connection, credential
+        )
+
+    def _is_built_in(self, tool: IntegrationTool) -> bool:
+        connector_class = resolve_connector(
+            tool.code, tool.connector_config, self.registry
+        )
+        return bool(connector_class and connector_class.is_built_in)
+
+    @staticmethod
+    def _to_system(
+        state: _ToolState,
+        integration_type: IntegrationType,
+        *,
+        is_chosen: bool,
+    ) -> IntegrationSystem:
+        status = state.card_status
+        return IntegrationSystem(
+            id=state.tool.id,
+            code=state.tool.code,
+            source_role_id=integration_type.id,
+            name=state.tool.name,
+            status_note=state.tool.description,
+            is_connected=status in _CONNECTED_STATUSES,
+            is_active=state.is_enabled,
+            is_default=state.is_built_in or is_chosen,
+            status=status,
+            last_tested_at=(
+                state.connection.last_tested_at if state.connection else None
+            ),
         )
 
     def _flows_of(self, tool: IntegrationTool) -> dict[str, FlowConfig]:
@@ -549,10 +624,19 @@ class ClientIntegrationService:
             name=tool.name,
             provider=tool.provider,
             description=tool.description,
+            # Built-in tools are open to every client, so they list all
+            # their types, not only the ones enabled for the client.
             integration_types=[
                 IntegrationTypeInfo.model_validate(integration_type)
-                for _, integration_type in enabled
-                if tool.serves(integration_type.id)
+                for integration_type in (
+                    tool.integration_types
+                    if state.is_built_in
+                    else [
+                        enabled_type
+                        for _, enabled_type in enabled
+                        if tool.serves(enabled_type.id)
+                    ]
+                )
             ],
             connector_kind=(
                 connector_kind(state.connector_class)
