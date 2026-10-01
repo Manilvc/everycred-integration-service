@@ -12,7 +12,7 @@ users, with that user's connection status.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Depends, Path, Query, status
 
 from app.features.client_integrations.dependencies import (
     ClientIntegrationServiceDep,
@@ -23,6 +23,7 @@ from app.features.client_integrations.schemas import (
     ToolConnectionDetail,
     ToolConnectionUpdate,
     UserIntegrationsListingResponse,
+    UserIntegrationStatus,
 )
 from app.features.clients.dependencies import (
     CurrentClient,
@@ -160,6 +161,16 @@ async def list_user_integrations(
     user_uuid: uuid.UUID,
     current_client: CurrentClient,
     service: ClientIntegrationServiceDep,
+    status_filter: Annotated[
+        list[UserIntegrationStatus] | None,
+        Query(
+            alias="status",
+            description=(
+                "Only systems with these statuses; repeat for several, "
+                "e.g. `?status=connected` for connected tools only."
+            ),
+        ),
+    ] = None,
 ) -> UserIntegrationsListingResponse:
     """Return every active type with the user's status for its tools.
 
@@ -171,5 +182,11 @@ async def list_user_integrations(
 
     Any `user_uuid` is accepted; a user this service has not seen yet is
     simply `not_connected` everywhere.
+
+    With `?status=connected`, only tools the user is connected to are
+    returned; every group is still listed, with an empty `systems` list
+    where none match.
     """
-    return await service.list_user_integrations(current_client, user_uuid)
+    return await service.list_user_integrations(
+        current_client, user_uuid, statuses=status_filter
+    )

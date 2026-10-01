@@ -610,3 +610,49 @@ async def test_users_and_clients_are_kept_apart(
     assert other_user["idme"]["status"] == "not_connected"
     seen_by_other = systems_by_key(same_user_other_client.json())
     assert seen_by_other["confirm"]["idme"]["connection_id"] is None
+
+
+async def test_status_filter_returns_only_connected_tools(
+    client: AsyncClient, setup: dict
+) -> None:
+    await save(client, setup, "idme", credentials={"api_key": "k"})
+
+    before = await client.get(
+        user_url(), params={"status": "connected"}, headers=setup["key"]
+    )
+    await connect_user_to_idme(client, setup)
+    after = await client.get(
+        user_url(), params={"status": "connected"}, headers=setup["key"]
+    )
+
+    # No connection yet: ID.me is left out; only the built-in wallet is
+    # connected. Every group is still listed.
+    assert {
+        key: list(systems)
+        for key, systems in systems_by_key(before.json()).items()
+    } == {"confirm": [], "gather": [], "declare": ["holder-wallet-app"]}
+    assert list(systems_by_key(after.json())["confirm"]) == ["idme"]
+
+
+async def test_status_filter_accepts_several_statuses(
+    client: AsyncClient, setup: dict
+) -> None:
+    response = await client.get(
+        user_url(),
+        params=[("status", "not_connected"), ("status", "unavailable")],
+        headers=setup["key"],
+    )
+
+    systems = systems_by_key(response.json())
+    assert list(systems["confirm"]) == ["idme"]
+    assert systems["declare"] == {}
+
+
+async def test_unknown_status_filter_is_rejected(
+    client: AsyncClient, setup: dict
+) -> None:
+    response = await client.get(
+        user_url(), params={"status": "online"}, headers=setup["key"]
+    )
+
+    assert response.status_code == 422

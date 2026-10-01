@@ -104,6 +104,10 @@ built-in tools such as the Holder Wallet App.
   when that was.
 - Any `user_uuid` is accepted; a user never seen before is
   `not_connected` everywhere.
+- By default every system the user can connect through is returned,
+  connected or not. `?status=connected` returns only the tools the user
+  is connected to (repeat `status` for several values). All groups are
+  still listed; those with no match have an empty `systems` list.
 
 ### Save parameters
 
