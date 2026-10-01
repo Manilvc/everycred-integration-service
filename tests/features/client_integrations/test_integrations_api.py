@@ -480,3 +480,133 @@ async def test_tool_without_connector_is_never_shown_enabled(
     response = await client.get(tool_url("login-gov"), headers=setup["key"])
 
     assert response.json()["is_enabled"] is False
+
+
+USER = "55555555-5555-4555-8555-555555555555"
+OTHER_USER = "66666666-6666-4666-8666-666666666666"
+
+
+def user_url(user: str = USER) -> str:
+    return f"/api/v1/client/users/{user}/integrations"
+
+
+async def user_systems(
+    client: AsyncClient, setup: dict, user: str = USER
+) -> dict[str, dict[str, dict]]:
+    response = await client.get(user_url(user), headers=setup["key"])
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["message"] == "User integrations retrieved successfully."
+    assert body["data"]["user_uuid"] == user
+    return systems_by_key(body)
+
+
+async def connect_user_to_idme(client: AsyncClient, setup: dict) -> None:
+    saved = await save(client, setup, "idme", credentials={"api_key": "k"})
+    assert saved.status_code == 200, saved.text
+    params = await client.put(
+        f"/api/v1/client/users/{USER}/connections/confirm",
+        json={"kwargs": {"id": "doc-1"}},
+        headers=setup["key"],
+    )
+    assert params.status_code == 200, params.text
+    connected = await client.post(
+        f"/api/v1/client/users/{USER}/connections/confirm/connect",
+        headers=setup["key"],
+    )
+    assert connected.status_code == 200, connected.text
+
+
+async def test_user_listing_requires_api_key(client: AsyncClient) -> None:
+    response = await client.get(user_url())
+
+    assert response.status_code == 401
+
+
+async def test_unknown_user_sees_routed_tool_and_built_ins(
+    client: AsyncClient, setup: dict
+) -> None:
+    systems = await user_systems(client, setup)
+
+    # Only the tool "confirm" routes users through is listed, not every
+    # tool serving the type; "gather" is not enabled for this client.
+    assert list(systems) == ["confirm", "gather", "declare"]
+    assert list(systems["confirm"]) == ["idme"]
+    assert systems["gather"] == {}
+    idme = systems["confirm"]["idme"]
+    # The client has not stored ID.me's credentials yet.
+    assert (idme["status"], idme["is_active"]) == ("unavailable", False)
+    assert idme["tool_status"] == "available"
+    assert idme["connection_id"] is None
+    wallet = systems["declare"]["holder-wallet-app"]
+    assert (wallet["status"], wallet["is_connected"]) == ("connected", True)
+
+
+async def test_user_status_follows_the_connection(
+    client: AsyncClient, setup: dict
+) -> None:
+    await save(client, setup, "idme", credentials={"api_key": "k"})
+    before = (await user_systems(client, setup))["confirm"]["idme"]
+    await client.put(
+        f"/api/v1/client/users/{USER}/connections/confirm",
+        json={"kwargs": {"id": "doc-1"}},
+        headers=setup["key"],
+    )
+    saved = (await user_systems(client, setup))["confirm"]["idme"]
+    await client.post(
+        f"/api/v1/client/users/{USER}/connections/confirm/connect",
+        headers=setup["key"],
+    )
+    connected = (await user_systems(client, setup))["confirm"]["idme"]
+
+    assert (before["status"], before["is_active"]) == ("not_connected", True)
+    assert saved["status"] == "pending"
+    assert saved["connection_id"] is not None
+    assert connected["status"] == "connected"
+    assert connected["is_connected"] is True
+    assert connected["last_connected_at"] is not None
+    assert connected["last_error"] is None
+
+
+async def test_switched_off_tool_is_unavailable_but_keeps_history(
+    client: AsyncClient, setup: dict
+) -> None:
+    await connect_user_to_idme(client, setup)
+    await save(client, setup, "idme", is_enabled=False)
+
+    idme = (await user_systems(client, setup))["confirm"]["idme"]
+
+    assert idme["status"] == "unavailable"
+    assert (idme["is_connected"], idme["is_active"]) == (False, False)
+    assert idme["tool_status"] == "disabled"
+    assert idme["connection_id"] is not None
+    assert idme["last_connected_at"] is not None
+
+
+async def test_users_and_clients_are_kept_apart(
+    client: AsyncClient,
+    setup: dict,
+    super_admin_headers: dict[str, str],
+) -> None:
+    await connect_user_to_idme(client, setup)
+    other_portal = await create_client(
+        client, super_admin_headers, code="other-portal"
+    )
+    await client.put(
+        f"/api/v1/clients/{other_portal['id']}/integrations/confirm",
+        json={"tool_code": "idme"},
+        headers=super_admin_headers,
+    )
+    other_key = await issue_api_key(
+        client, super_admin_headers, other_portal["id"]
+    )
+
+    other_user = (await user_systems(client, setup, OTHER_USER))["confirm"]
+    same_user_other_client = await client.get(
+        user_url(), headers={"X-API-Key": other_key["api_key"]}
+    )
+
+    assert other_user["idme"]["status"] == "not_connected"
+    seen_by_other = systems_by_key(same_user_other_client.json())
+    assert seen_by_other["confirm"]["idme"]["connection_id"] is None

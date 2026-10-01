@@ -4,8 +4,12 @@ Called by the client's own backend with its ``X-API-Key``: the list of
 integration types with their tool cards, a tool's drawer, Save, and
 Test connection. A client only ever sees tools serving the types a
 super admin enabled for it.
+
+``user_router`` lists the same integrations for one of the client's
+users, with that user's connection status.
 """
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, status
@@ -18,6 +22,7 @@ from app.features.client_integrations.schemas import (
     IntegrationsListingResponse,
     ToolConnectionDetail,
     ToolConnectionUpdate,
+    UserIntegrationsListingResponse,
 )
 from app.features.clients.dependencies import (
     CurrentClient,
@@ -29,6 +34,18 @@ from app.shared.schemas import ErrorResponse
 router = APIRouter(
     prefix="/client/integrations",
     tags=["Client Integrations"],
+    dependencies=[Depends(get_current_client)],
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "model": ErrorResponse,
+            "description": "Missing or invalid API key",
+        },
+    },
+)
+
+user_router = APIRouter(
+    prefix="/client/users/{user_uuid}/integrations",
+    tags=["User Connections"],
     dependencies=[Depends(get_current_client)],
     responses={
         status.HTTP_401_UNAUTHORIZED: {
@@ -132,3 +149,27 @@ async def test_client_integration(
     A failed test returns `200` with `success: false` and the reason.
     """
     return await service.test_tool(current_client, tool_code)
+
+
+@user_router.get(
+    "",
+    response_model=UserIntegrationsListingResponse,
+    summary="List a user's integrations with connection status",
+)
+async def list_user_integrations(
+    user_uuid: uuid.UUID,
+    current_client: CurrentClient,
+    service: ClientIntegrationServiceDep,
+) -> UserIntegrationsListingResponse:
+    """Return every active type with the user's status for its tools.
+
+    Each group lists the tool the client routes that type through, plus
+    built-in tools such as the Holder Wallet App. System `status` is the
+    user's: `connected`, `pending`, `failed`, `not_connected`, or
+    `unavailable` (the client has the tool switched off or not set up).
+    `tool_status` is the tool's status on the client's own screen.
+
+    Any `user_uuid` is accepted; a user this service has not seen yet is
+    simply `not_connected` everywhere.
+    """
+    return await service.list_user_integrations(current_client, user_uuid)

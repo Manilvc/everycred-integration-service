@@ -9,6 +9,8 @@ for a type stays a super admin choice (``is_default`` on the card).
 import asyncio
 import logging
 import traceback
+import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import httpx
@@ -49,6 +51,11 @@ from app.features.client_integrations.schemas import (
     IntegrationTypeInfo,
     ToolConnectionDetail,
     ToolConnectionUpdate,
+    UserIntegrationGroup,
+    UserIntegrationsListing,
+    UserIntegrationsListingResponse,
+    UserIntegrationStatus,
+    UserIntegrationSystem,
 )
 from app.features.clients.models import (
     Client,
@@ -70,6 +77,10 @@ from app.features.integration_tools.repository import (
 from app.features.integration_types.models import IntegrationType
 from app.features.integration_types.repository import (
     IntegrationTypeRepository,
+)
+from app.features.user_connections.models import UserIntegrationConnection
+from app.features.user_connections.repository import (
+    UserConnectionRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -149,6 +160,11 @@ class _ToolState:
         return self.credential is not None or not self.missing_credentials
 
     @property
+    def is_usable_by_users(self) -> bool:
+        """Whether the client's users can connect through the tool now."""
+        return self.is_enabled and not self.missing_credentials
+
+    @property
     def card_status(self) -> CardStatus:
         if self.connector_class is None:
             return CardStatus.UNAVAILABLE
@@ -165,6 +181,32 @@ class _ToolState:
         return _STATUS_TO_CARD[ToolConnectionStatus(self.connection.status)]
 
 
+@dataclass(frozen=True, slots=True)
+class _Catalogue:
+    """What both listings are built from, loaded once per request.
+
+    Attributes:
+        integration_types: Every active type, in display order.
+        config_by_type_id: The client's usable configurations.
+        tool_states: Every active tool serving any listed type, with its
+            state for the client, in display order.
+    """
+
+    integration_types: Sequence[IntegrationType]
+    config_by_type_id: dict[uuid.UUID, ClientIntegrationConfig]
+    tool_states: list[_ToolState]
+
+    def states_for(
+        self, integration_type: IntegrationType
+    ) -> list[_ToolState]:
+        """Return the tools serving ``integration_type``, in order."""
+        return [
+            state
+            for state in self.tool_states
+            if state.tool.serves(integration_type.id)
+        ]
+
+
 class ClientIntegrationService:
     """Lists, configures, and tests a client's own integration tools."""
 
@@ -176,6 +218,7 @@ class ClientIntegrationService:
         tools: IntegrationToolRepository,
         credentials: ClientToolCredentialRepository,
         connections: ClientToolConnectionRepository,
+        user_connections: UserConnectionRepository,
         secret_store: SecretStore,
         registry: ConnectorRegistry,
         http_client: httpx.AsyncClient,
@@ -187,6 +230,7 @@ class ClientIntegrationService:
         self.tools = tools
         self.credentials = credentials
         self.connections = connections
+        self.user_connections = user_connections
         self.secret_store = secret_store
         self.registry = registry
         self.http_client = http_client
@@ -200,39 +244,22 @@ class ClientIntegrationService:
         A type the client has not enabled is still listed, so the screen
         always shows the same groups, but only with built-in systems.
         """
-        integration_types = await self.integration_types.list_active()
-        config_by_type_id = {
-            integration_type.id: config
-            for config, integration_type in await self._enabled_types(client)
-        }
-        tools = await self.tools.list_active_for_types(
-            [integration_type.id for integration_type in integration_types]
-        )
-        connections = await self.connections.by_tool_for_client(client.id)
-        credentials = await self.credentials.by_tool_for_client(client.id)
-
+        catalogue = await self._load_catalogue(client)
         groups = []
-        for integration_type in integration_types:
-            config = config_by_type_id.get(integration_type.id)
-            systems = []
-            for tool in tools:
-                if not tool.serves(integration_type.id):
-                    continue
-                state = self._state(
-                    tool, connections.get(tool.id), credentials.get(tool.id)
+        for integration_type in catalogue.integration_types:
+            config = catalogue.config_by_type_id.get(integration_type.id)
+            systems = [
+                self._to_system(
+                    state,
+                    integration_type,
+                    is_chosen=(
+                        config is not None
+                        and config.integration_tool_id == state.tool.id
+                    ),
                 )
-                if config is None and not state.is_built_in:
-                    continue
-                systems.append(
-                    self._to_system(
-                        state,
-                        integration_type,
-                        is_chosen=(
-                            config is not None
-                            and config.integration_tool_id == tool.id
-                        ),
-                    )
-                )
+                for state in catalogue.states_for(integration_type)
+                if config is not None or state.is_built_in
+            ]
             groups.append(
                 IntegrationGroup(
                     id=integration_type.id,
@@ -244,6 +271,71 @@ class ClientIntegrationService:
             )
         return IntegrationsListingResponse(
             data=IntegrationsListing(groups=groups)
+        )
+
+    async def list_user_integrations(
+        self, client: Client, user_uuid: uuid.UUID
+    ) -> UserIntegrationsListingResponse:
+        """Return every active type with the user's status for each tool.
+
+        A user connects to a type through the tool the client routes it
+        to, so each group lists that tool (if the type is enabled and a
+        tool is chosen) and any built-in tools. Works for users this
+        service has never seen: they are simply not connected yet.
+        """
+        catalogue = await self._load_catalogue(client)
+        connection_by_type_id = {
+            connection.integration_type_id: connection
+            for connection, _ in await self.user_connections.list_for_user(
+                client.id, user_uuid
+            )
+        }
+        groups = []
+        for integration_type in catalogue.integration_types:
+            config = catalogue.config_by_type_id.get(integration_type.id)
+            chosen_tool_id = config.integration_tool_id if config else None
+            systems = [
+                self._to_user_system(
+                    state,
+                    integration_type,
+                    connection_by_type_id.get(integration_type.id),
+                )
+                for state in catalogue.states_for(integration_type)
+                if state.is_built_in or state.tool.id == chosen_tool_id
+            ]
+            groups.append(
+                UserIntegrationGroup(
+                    id=integration_type.id,
+                    key=integration_type.code,
+                    label=group_label(integration_type),
+                    description=integration_type.description,
+                    systems=systems,
+                )
+            )
+        return UserIntegrationsListingResponse(
+            data=UserIntegrationsListing(user_uuid=user_uuid, groups=groups)
+        )
+
+    async def _load_catalogue(self, client: Client) -> _Catalogue:
+        integration_types = await self.integration_types.list_active()
+        config_by_type_id = {
+            integration_type.id: config
+            for config, integration_type in await self._enabled_types(client)
+        }
+        tools = await self.tools.list_active_for_types(
+            [integration_type.id for integration_type in integration_types]
+        )
+        connections = await self.connections.by_tool_for_client(client.id)
+        credentials = await self.credentials.by_tool_for_client(client.id)
+        return _Catalogue(
+            integration_types=integration_types,
+            config_by_type_id=config_by_type_id,
+            tool_states=[
+                self._state(
+                    tool, connections.get(tool.id), credentials.get(tool.id)
+                )
+                for tool in tools
+            ],
         )
 
     async def get_tool(
@@ -586,6 +678,42 @@ class ClientIntegrationService:
             last_tested_at=(
                 state.connection.last_tested_at if state.connection else None
             ),
+        )
+
+    @staticmethod
+    def _to_user_system(
+        state: _ToolState,
+        integration_type: IntegrationType,
+        connection: UserIntegrationConnection | None,
+    ) -> UserIntegrationSystem:
+        # A built-in tool has no per-user connection to report.
+        if state.is_built_in:
+            connection = None
+        if not state.is_usable_by_users:
+            status = UserIntegrationStatus.UNAVAILABLE
+        elif state.is_built_in:
+            status = UserIntegrationStatus.CONNECTED
+        elif connection is None:
+            status = UserIntegrationStatus.NOT_CONNECTED
+        else:
+            status = UserIntegrationStatus(connection.status)
+        return UserIntegrationSystem(
+            id=state.tool.id,
+            code=state.tool.code,
+            source_role_id=integration_type.id,
+            name=state.tool.name,
+            status_note=state.tool.description,
+            is_connected=status is UserIntegrationStatus.CONNECTED,
+            is_active=state.is_usable_by_users,
+            is_default=True,
+            status=status,
+            tool_status=state.card_status,
+            connection_id=connection.id if connection else None,
+            last_attempt_at=connection.last_attempt_at if connection else None,
+            last_connected_at=(
+                connection.last_connected_at if connection else None
+            ),
+            last_error=connection.last_error if connection else None,
         )
 
     def _flows_of(self, tool: IntegrationTool) -> dict[str, FlowConfig]:

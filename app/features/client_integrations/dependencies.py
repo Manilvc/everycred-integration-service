@@ -23,6 +23,9 @@ from app.features.integration_tools.repository import (
 from app.features.integration_types.repository import (
     IntegrationTypeRepository,
 )
+from app.features.user_connections.repository import (
+    UserConnectionRepository,
+)
 
 
 def get_client_integration_service(
@@ -40,6 +43,7 @@ def get_client_integration_service(
         tools=IntegrationToolRepository(session),
         credentials=ClientToolCredentialRepository(session),
         connections=ClientToolConnectionRepository(session),
+        user_connections=UserConnectionRepository(session),
         secret_store=secret_store,
         registry=registry,
         http_client=http_client,

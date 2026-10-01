@@ -15,6 +15,9 @@ from fastapi import APIRouter, status
 from app.features.client_integrations.router import (
     router as client_integrations_router,
 )
+from app.features.client_integrations.router import (
+    user_router as user_integrations_router,
+)
 from app.features.clients.admin_router import router as clients_router
 from app.features.clients.client_router import (
     router as client_self_service_router,
@@ -53,6 +56,7 @@ api_v1_router.include_router(clients_router)
 api_v1_router.include_router(client_self_service_router)
 api_v1_router.include_router(client_integration_tools_router)
 api_v1_router.include_router(client_integrations_router)
+api_v1_router.include_router(user_integrations_router)
 api_v1_router.include_router(user_connections_router)
 api_v1_router.include_router(sessions_router)
 api_v1_router.include_router(webhooks_router)

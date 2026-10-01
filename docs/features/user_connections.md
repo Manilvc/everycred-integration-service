@@ -1,7 +1,7 @@
 # User Connections
 
 > Package: `app/features/user_connections/` (connectors in `app/connectors/`)
-> Last updated: 2026-09-29
+> Last updated: 2026-10-01
 
 ## Overview
 
@@ -35,12 +35,75 @@ All routes require `X-API-Key`.
 
 | Method | Path | Summary |
 |--------|------|---------|
+| GET    | `/api/v1/client/users/{user_uuid}/integrations` | The user's integrations, grouped by type, with connection status |
 | GET    | `/api/v1/client/users/{user_uuid}/connections` | List the user's connections |
 | GET    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Get one connection |
 | PUT    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Save `args` / `kwargs` |
 | POST   | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}/connect` | Run the connector |
 | POST   | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}/operations/{operation}` | Run one operation of the tool |
 | DELETE | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Delete the connection |
+
+### A user's integrations with connection status
+
+`GET /api/v1/client/users/{user_uuid}/integrations` returns the same
+envelope and group shape as the client's Integrations screen
+([client integrations](client_integrations.md#list)), for one user.
+Each group lists the tool the client routes that type through, plus
+built-in tools such as the Holder Wallet App.
+
+```json
+{
+  "status": "success",
+  "data": {
+    "user_uuid": "00000000-0000-0000-0000-000000000001",
+    "groups": [
+      {
+        "id": "…",
+        "key": "confirm",
+        "label": "CONFIRM - Identity & verification",
+        "description": "Identity & verification",
+        "systems": [
+          {
+            "id": "…",
+            "code": "surepass",
+            "source_role_id": "…",
+            "name": "SurePass",
+            "status_note": "Indian KYC: Aadhaar OTP and PAN verification.",
+            "is_connected": true,
+            "is_active": true,
+            "is_default": true,
+            "status": "connected",
+            "tool_status": "connected",
+            "connection_id": "…",
+            "last_attempt_at": "2026-10-01T09:00:00Z",
+            "last_connected_at": "2026-10-01T09:00:00Z",
+            "last_error": null
+          }
+        ]
+      }
+    ]
+  },
+  "message": "User integrations retrieved successfully."
+}
+```
+
+| `status` | Meaning |
+|----------|---------|
+| `not_connected` | No connection saved for this type yet |
+| `pending` | Parameters saved, not connected since |
+| `connected` | The last connection attempt succeeded (built-in tools are always connected) |
+| `failed` | The last attempt failed; see `last_error` |
+| `unavailable` | The user cannot connect: the client has the tool switched off, has not stored its credentials, or no connector is installed |
+
+- `is_connected` is `status == "connected"`; `is_active` is "the user
+  can use the tool now".
+- `tool_status` is the tool's status for the client, as on the client's
+  own screen; it explains an `unavailable`.
+- An `unavailable` system keeps `connection_id` and the timestamps, so a
+  user connected before the client switched the tool off still shows
+  when that was.
+- Any `user_uuid` is accepted; a user never seen before is
+  `not_connected` everywhere.
 
 ### Save parameters
 
