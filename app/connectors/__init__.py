@@ -5,3 +5,5 @@ Each connector module registers itself with
 Import every connector module below so it is available at runtime; a
 type without a registered connector answers ``connector_not_available``.
 """
+
+from app.connectors import holder_wallet_app  # noqa: F401

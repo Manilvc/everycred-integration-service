@@ -83,8 +83,20 @@ async def setup(
             display_order=1,
         )
         gather = IntegrationType(code="gather", name="Gather", display_order=2)
+        declare = IntegrationType(
+            code="declare",
+            name="Declare",
+            description="Holder & issuer input",
+            display_order=3,
+        )
         session.add_all(
             [
+                IntegrationTool(
+                    code="holder-wallet-app",
+                    name="Holder Wallet App",
+                    description="Wallet Application",
+                    integration_types=[declare],
+                ),
                 IntegrationTool(
                     code="entra",
                     name="Microsoft Entra ID",
@@ -146,22 +158,97 @@ async def test_screen_requires_api_key(client: AsyncClient) -> None:
     assert response.status_code == 401
 
 
-async def test_list_groups_enabled_types_with_tool_cards(
+def systems_by_key(body: dict) -> dict[str, dict[str, dict]]:
+    return {
+        group["key"]: {system["code"]: system for system in group["systems"]}
+        for group in body["data"]["groups"]
+    }
+
+
+async def test_list_matches_the_everycred_screen_shape(
     client: AsyncClient, setup: dict
 ) -> None:
     response = await client.get(LIST_URL, headers=setup["key"])
 
-    groups = response.json()["groups"]
-    # Only "confirm" is enabled for this client; "gather" is hidden.
-    assert [g["integration_type"]["code"] for g in groups] == ["confirm"]
-    assert groups[0]["integration_type"]["description"] == (
-        "Is this really the person?"
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == "success"
+    assert body["message"] == "Integrations retrieved successfully."
+    confirm = body["data"]["groups"][0]
+    assert confirm["key"] == "confirm"
+    assert confirm["label"] == "CONFIRM - Is this really the person?"
+    assert confirm["description"] == "Is this really the person?"
+    idme = next(s for s in confirm["systems"] if s["code"] == "idme")
+    assert idme["source_role_id"] == confirm["id"]
+    assert set(idme) == {
+        "id",
+        "code",
+        "source_role_id",
+        "name",
+        "status_note",
+        "is_connected",
+        "is_active",
+        "is_default",
+        "status",
+        "last_tested_at",
+    }
+
+
+async def test_list_shows_every_type_but_only_enabled_tools(
+    client: AsyncClient, setup: dict
+) -> None:
+    response = await client.get(LIST_URL, headers=setup["key"])
+
+    systems = systems_by_key(response.json())
+    # Every active type is a group; only "confirm" is enabled for this
+    # client, so "gather" has no systems.
+    assert list(systems) == ["confirm", "gather", "declare"]
+    assert list(systems["confirm"]) == ["entra", "idme", "login-gov"]
+    assert systems["gather"] == {}
+    assert systems["confirm"]["entra"]["status"] == "available"
+    assert systems["confirm"]["entra"]["is_connected"] is False
+    assert systems["confirm"]["idme"]["is_default"] is True
+    assert systems["confirm"]["login-gov"]["status"] == "unavailable"
+
+
+async def test_built_in_wallet_is_listed_for_every_client(
+    client: AsyncClient, setup: dict
+) -> None:
+    response = await client.get(LIST_URL, headers=setup["key"])
+
+    wallet = systems_by_key(response.json())["declare"]["holder-wallet-app"]
+    assert wallet["name"] == "Holder Wallet App"
+    assert wallet["status_note"] == "Wallet Application"
+    assert wallet["status"] == "connected"
+    assert (wallet["is_connected"], wallet["is_active"]) == (True, True)
+    assert wallet["is_default"] is True
+
+
+async def test_built_in_wallet_can_be_opened_tested_and_switched_off(
+    client: AsyncClient, setup: dict
+) -> None:
+    detail = await client.get(
+        tool_url("holder-wallet-app"), headers=setup["key"]
     )
-    cards = {card["code"]: card for card in groups[0]["tools"]}
-    assert list(cards) == ["entra", "idme", "login-gov"]
-    assert cards["entra"]["status"] == "available"
-    assert cards["idme"]["is_default"] is True
-    assert cards["login-gov"]["status"] == "unavailable"
+    tested = await client.post(
+        f"{tool_url('holder-wallet-app')}/test", headers=setup["key"]
+    )
+    switched_off = await save(
+        client, setup, "holder-wallet-app", is_enabled=False
+    )
+    listed = await client.get(LIST_URL, headers=setup["key"])
+
+    assert detail.status_code == 200
+    assert detail.json()["missing_credentials"] == []
+    assert [t["code"] for t in detail.json()["integration_types"]] == [
+        "declare"
+    ]
+    assert tested.json()["success"] is True
+    assert tested.json()["called_provider"] is False
+    assert switched_off.json()["status"] == "disabled"
+    wallet = systems_by_key(listed.json())["declare"]["holder-wallet-app"]
+    assert (wallet["status"], wallet["is_connected"]) == ("disabled", False)
+    assert wallet["is_active"] is False
 
 
 async def test_detail_describes_auth_and_missing_credentials(
@@ -253,9 +340,10 @@ async def test_test_connection_marks_tool_connected(
     api_call = providers.requests[-1]
     assert api_call.url.path == "/v1.0/organization"
     assert api_call.headers["Authorization"] == "Bearer tok"
-    card = (await client.get(LIST_URL, headers=setup["key"])).json()
-    entra = card["groups"][0]["tools"][0]
-    assert (entra["status"], entra["is_enabled"]) == ("connected", True)
+    listed = (await client.get(LIST_URL, headers=setup["key"])).json()
+    entra = systems_by_key(listed)["confirm"]["entra"]
+    assert (entra["status"], entra["is_active"]) == ("connected", True)
+    assert entra["is_connected"] is True
     assert entra["last_tested_at"] is not None
 
 

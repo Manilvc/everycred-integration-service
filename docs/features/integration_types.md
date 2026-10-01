@@ -125,14 +125,19 @@ Table `integration_types` (migration `18ecd5dab8cc`):
 | `display_order` | `INT`          | Default `0`                       |
 | `created_at`, `updated_at` | `DATETIME` | UTC                        |
 
-Seeded rows:
+Seeded rows (migrations `18ecd5dab8cc` and `c5f3f5bf92e7`):
 
-| `code`        | `name`      | `display_order` |
-|---------------|-------------|-----------------|
-| `confirm`     | Confirm     | 10              |
-| `gather`      | Gather      | 20              |
-| `enforcement` | Enforcement | 30              |
-| `records`     | Records     | 40              |
+| `code`        | `name`      | `description`                  | `display_order` |
+|---------------|-------------|--------------------------------|-----------------|
+| `confirm`     | Confirm     | Identity & verification        | 10              |
+| `gather`      | Gather      | Systems of record (read-only)  | 20              |
+| `declare`     | Declare     | Holder & issuer input          | 30              |
+| `enforcement` | Enforcement | Physical access systems        | 40              |
+| `records`     | Records     | Audit & evidence               | 50              |
+
+The second migration only fills in empty descriptions and moves
+`enforcement` and `records` if they are still at their seeded order, so
+it keeps edits made directly in the table.
 
 ## Design decisions
 

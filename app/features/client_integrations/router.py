@@ -14,8 +14,8 @@ from app.features.client_integrations.dependencies import (
     ClientIntegrationServiceDep,
 )
 from app.features.client_integrations.schemas import (
-    ClientIntegrationsResponse,
     ConnectionTestResponse,
+    IntegrationsListingResponse,
     ToolConnectionDetail,
     ToolConnectionUpdate,
 )
@@ -53,17 +53,23 @@ _TOOL_ERRORS = {
 
 @router.get(
     "",
-    response_model=ClientIntegrationsResponse,
+    response_model=IntegrationsListingResponse,
     summary="List integrations grouped by type",
 )
 async def list_client_integrations(
     current_client: CurrentClient, service: ClientIntegrationServiceDep
-) -> ClientIntegrationsResponse:
-    """Return each enabled integration type with its tool cards.
+) -> IntegrationsListingResponse:
+    """Return every active integration type with the client's systems.
 
-    Card `status` is one of `available`, `needs_credentials`,
+    The shape matches the EveryCRED Integrations screen: `groups` with
+    `id`, `key`, `label`, `description`, and `systems`. A type the client
+    has not enabled is listed with built-in systems only, such as the
+    Holder Wallet App under Declare.
+
+    System `status` is one of `available`, `needs_credentials`,
     `not_tested`, `configured`, `connected`, `failed`, `disabled`, or
-    `unavailable` (no connector installed yet).
+    `unavailable` (no connector installed yet). Use a system's `code`
+    for the drawer, Save, and Test connection endpoints.
     """
     return await service.list_integrations(current_client)
 

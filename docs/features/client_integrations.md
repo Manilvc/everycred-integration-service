@@ -1,7 +1,7 @@
 # Client Integrations (the Integrations screen)
 
 > Package: `app/features/client_integrations/`
-> Last updated: 2026-09-29
+> Last updated: 2026-10-01
 
 ## Overview
 
@@ -9,10 +9,11 @@ The APIs behind a client admin's **Integrations** screen: tools grouped
 by integration type, each card showing its status, and a drawer to
 store credentials, switch the tool on or off, and **Test connection**.
 
-They are called by the client's own backend with its `X-API-Key`. A
-client sees only the types a super admin enabled for it and the active
-tools serving them. Which tool its users are routed through for a type
-(`is_default`) remains a super admin choice.
+They are called by the client's own backend with its `X-API-Key`. The
+listing has every active type, but a client only gets the active tools
+serving the types a super admin enabled for it, plus **built-in** tools
+such as the Holder Wallet App, which every client gets. Which tool its
+users are routed through for a type remains a super admin choice.
 
 ```mermaid
 flowchart LR
@@ -28,30 +29,91 @@ flowchart LR
 
 | Method | Path | Screen element |
 |--------|------|----------------|
-| GET | `/api/v1/client/integrations` | The page: groups and tool cards |
+| GET | `/api/v1/client/integrations` | The page: groups and their systems |
 | GET | `/api/v1/client/integrations/{tool_code}` | The drawer |
 | PUT | `/api/v1/client/integrations/{tool_code}` | **Save**: switch and credentials |
 | POST | `/api/v1/client/integrations/{tool_code}/test` | **Test connection** |
 
 ### List
 
+Same envelope and field names as the EveryCRED Integrations screen
+(`apps/v1/api/integrations` in the EveryCRED backend), so its frontend
+renders it unchanged. Ids are this service's UUIDs.
+
 ```json
 {
-  "groups": [
-    {
-      "integration_type": {"code": "confirm", "name": "Confirm", "description": "Is this really the person?"},
-      "tools": [
-        {"code": "entra", "name": "Microsoft Entra ID", "provider": "Microsoft",
-         "status": "connected", "is_enabled": true, "is_default": true,
-         "last_tested_at": "2026-09-29T08:15:00Z"}
-      ]
-    }
-  ]
+  "status": "success",
+  "data": {
+    "groups": [
+      {
+        "id": "a62b8f29-af24-4b69-9b6c-e00e17afff08",
+        "key": "confirm",
+        "label": "CONFIRM - Identity & verification",
+        "description": "Identity & verification",
+        "systems": [
+          {
+            "id": "5c1e0c6e-8f0e-4d55-9a57-3f4f1b0b2c11",
+            "code": "surepass",
+            "source_role_id": "a62b8f29-af24-4b69-9b6c-e00e17afff08",
+            "name": "SurePass",
+            "status_note": "Indian KYC: Aadhaar OTP and PAN verification.",
+            "is_connected": true,
+            "is_active": true,
+            "is_default": true,
+            "status": "connected",
+            "last_tested_at": "2026-10-01T08:15:00Z"
+          }
+        ]
+      },
+      {
+        "id": "…",
+        "key": "declare",
+        "label": "DECLARE - Holder & issuer input",
+        "description": "Holder & issuer input",
+        "systems": [
+          {
+            "id": "…",
+            "code": "holder-wallet-app",
+            "source_role_id": "…",
+            "name": "Holder Wallet App",
+            "status_note": "Wallet Application",
+            "is_connected": true,
+            "is_active": true,
+            "is_default": true,
+            "status": "connected",
+            "last_tested_at": null
+          }
+        ]
+      }
+    ]
+  },
+  "message": "Integrations retrieved successfully."
 }
 ```
 
-Groups follow the types' `display_order`; the heading question comes
-from the type's `description`.
+| Field | Source |
+|-------|--------|
+| group `id`, `key`, `description` | The integration type's id, `code`, `description` |
+| group `label` | `"<NAME> - <description>"`, or just the name in capitals when there is no description |
+| system `id`, `code`, `name`, `status_note` | The tool's id, `code`, `name`, `description` |
+| system `source_role_id` | The group's `id` |
+| system `is_connected` | `status` is `connected` or `configured` |
+| system `is_active` | The client has the tool switched on |
+| system `is_default` | Built-in tool, or the tool the type routes users through |
+| system `code` | Extra to the EveryCRED shape: needed for the drawer, Save, and Test connection |
+
+Groups follow the types' `display_order`. A type the client has not
+enabled is listed with built-in systems only (often none), so the
+screen always shows the same groups.
+
+### Built-in tools
+
+A tool whose connector sets `is_built_in = True` is provided by
+EveryCRED itself; `holder-wallet-app` (`app/connectors/holder_wallet_app.py`,
+seeded by migration `c5f3f5bf92e7`) is the first. It needs no
+credentials, is listed for every client, and shows `connected` unless
+the client switches it off with Save (`{"is_enabled": false}`). Test
+connection succeeds without calling anything.
 
 ### Card status
 
@@ -152,12 +214,13 @@ setups made through the super admin API keep working.
 
 - **Field mappings** and **sync schedules** from the prototype drawer.
 - **Deployment** (on-premises vs cloud) is not modelled.
-- Types stay `confirm`, `gather`, `enforcement`, `records`; the
-  prototype's *Declare* group has no type yet.
+- The type codes stay `enforcement` and `records`; EveryCRED's own
+  screen uses `enforce` and `record` for those groups.
 
 ## Testing
 
 - `tests/features/client_integrations/test_integrations_api.py` —
-  grouping, statuses, scoping, credential merge, tests, and disabling.
+  the EveryCRED response shape, grouping, statuses, built-in tools,
+  scoping, credential merge, tests, and disabling.
 - `tests/connectors/test_oauth.py` — token requests, caching, retry,
   client auth styles, and configuration rules.
