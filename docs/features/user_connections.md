@@ -35,7 +35,7 @@ All routes require `X-API-Key`.
 
 | Method | Path | Summary |
 |--------|------|---------|
-| GET    | `/api/v1/client/users/{user_uuid}/integrations` | The user's integrations, grouped by type, with connection status |
+| GET    | `/api/v1/client/users/{user_uuid}/integrations` | The integrations the user is connected to, grouped by type |
 | GET    | `/api/v1/client/users/{user_uuid}/connections` | List the user's connections |
 | GET    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Get one connection |
 | PUT    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Save `args` / `kwargs` |
@@ -104,10 +104,12 @@ built-in tools such as the Holder Wallet App.
   when that was.
 - Any `user_uuid` is accepted; a user never seen before is
   `not_connected` everywhere.
-- By default every system the user can connect through is returned,
-  connected or not. `?status=connected` returns only the tools the user
-  is connected to (repeat `status` for several values). All groups are
-  still listed; those with no match have an empty `systems` list.
+- By default only `connected` systems are returned: tools the user has
+  connected to, and built-in tools. All groups are still listed; those
+  with nothing connected have an empty `systems` list.
+- Other statuses are returned only when asked for with `status`
+  (repeatable), e.g. `?status=not_connected&status=pending` for tools
+  the user has not finished connecting.
 
 ### Save parameters
 

@@ -490,10 +490,25 @@ def user_url(user: str = USER) -> str:
     return f"/api/v1/client/users/{user}/integrations"
 
 
+ALL_USER_STATUSES = [
+    ("status", value)
+    for value in (
+        "connected",
+        "pending",
+        "failed",
+        "not_connected",
+        "unavailable",
+    )
+]
+
+
 async def user_systems(
     client: AsyncClient, setup: dict, user: str = USER
 ) -> dict[str, dict[str, dict]]:
-    response = await client.get(user_url(user), headers=setup["key"])
+    """List every system the user could use, whatever its status."""
+    response = await client.get(
+        user_url(user), params=ALL_USER_STATUSES, headers=setup["key"]
+    )
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "success"
@@ -604,7 +619,9 @@ async def test_users_and_clients_are_kept_apart(
 
     other_user = (await user_systems(client, setup, OTHER_USER))["confirm"]
     same_user_other_client = await client.get(
-        user_url(), headers={"X-API-Key": other_key["api_key"]}
+        user_url(),
+        params=ALL_USER_STATUSES,
+        headers={"X-API-Key": other_key["api_key"]},
     )
 
     assert other_user["idme"]["status"] == "not_connected"
@@ -612,16 +629,15 @@ async def test_users_and_clients_are_kept_apart(
     assert seen_by_other["confirm"]["idme"]["connection_id"] is None
 
 
-async def test_status_filter_returns_only_connected_tools(
+async def test_only_connected_tools_are_returned_by_default(
     client: AsyncClient, setup: dict
 ) -> None:
     await save(client, setup, "idme", credentials={"api_key": "k"})
 
-    before = await client.get(
-        user_url(), params={"status": "connected"}, headers=setup["key"]
-    )
+    before = await client.get(user_url(), headers=setup["key"])
     await connect_user_to_idme(client, setup)
-    after = await client.get(
+    after = await client.get(user_url(), headers=setup["key"])
+    explicit = await client.get(
         user_url(), params={"status": "connected"}, headers=setup["key"]
     )
 
@@ -632,6 +648,7 @@ async def test_status_filter_returns_only_connected_tools(
         for key, systems in systems_by_key(before.json()).items()
     } == {"confirm": [], "gather": [], "declare": ["holder-wallet-app"]}
     assert list(systems_by_key(after.json())["confirm"]) == ["idme"]
+    assert explicit.json() == after.json()
 
 
 async def test_status_filter_accepts_several_statuses(

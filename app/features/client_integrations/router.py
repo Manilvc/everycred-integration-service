@@ -155,7 +155,7 @@ async def test_client_integration(
 @user_router.get(
     "",
     response_model=UserIntegrationsListingResponse,
-    summary="List a user's integrations with connection status",
+    summary="List the integrations a user is connected to",
 )
 async def list_user_integrations(
     user_uuid: uuid.UUID,
@@ -166,27 +166,27 @@ async def list_user_integrations(
         Query(
             alias="status",
             description=(
-                "Only systems with these statuses; repeat for several, "
-                "e.g. `?status=connected` for connected tools only."
+                "Statuses to return; repeat for several. Defaults to "
+                "`connected`. Pass e.g. `status=not_connected&status="
+                "pending` to see tools the user has not connected yet."
             ),
         ),
     ] = None,
 ) -> UserIntegrationsListingResponse:
-    """Return every active type with the user's status for its tools.
+    """Return the tools the user is connected to, grouped by type.
 
-    Each group lists the tool the client routes that type through, plus
-    built-in tools such as the Holder Wallet App. System `status` is the
-    user's: `connected`, `pending`, `failed`, `not_connected`, or
-    `unavailable` (the client has the tool switched off or not set up).
-    `tool_status` is the tool's status on the client's own screen.
+    By default only `connected` systems are returned: the tool the client
+    routes a type through, once the user has connected to it, and
+    built-in tools such as the Holder Wallet App. Every group is listed,
+    with an empty `systems` list where the user has nothing connected.
 
-    Any `user_uuid` is accepted; a user this service has not seen yet is
-    simply `not_connected` everywhere.
-
-    With `?status=connected`, only tools the user is connected to are
-    returned; every group is still listed, with an empty `systems` list
-    where none match.
+    Ask for other statuses with `status` (repeatable): `pending`,
+    `failed`, `not_connected`, or `unavailable` (the client has the tool
+    switched off or not set up). `tool_status` is the tool's status on
+    the client's own screen.
     """
     return await service.list_user_integrations(
-        current_client, user_uuid, statuses=status_filter
+        current_client,
+        user_uuid,
+        statuses=status_filter or [UserIntegrationStatus.CONNECTED],
     )
