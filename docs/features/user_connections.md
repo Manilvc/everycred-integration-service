@@ -38,8 +38,8 @@ All routes require `X-API-Key`.
 | GET    | `/api/v1/client/users/{user_uuid}/integrations` | The integrations the user is connected to, grouped by type |
 | GET    | `/api/v1/client/users/{user_uuid}/connections` | List the user's connections |
 | GET    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Get one connection |
-| PUT    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Save `args` / `kwargs` |
-| POST   | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}/connect` | Run the connector |
+| PUT    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Save `args` / `kwargs` and connect |
+| POST   | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}/connect` | Connect again with the saved parameters |
 | POST   | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}/operations/{operation}` | Run one operation of the tool |
 | DELETE | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Delete the connection |
 
@@ -90,7 +90,7 @@ built-in tools such as the Holder Wallet App.
 | `status` | Meaning |
 |----------|---------|
 | `not_connected` | No connection saved for this type yet |
-| `pending` | Parameters saved, not connected since |
+| `pending` | Parameters saved, but the type has no usable tool to connect through yet |
 | `connected` | The user's last connection attempt succeeded |
 | `failed` | The last attempt failed; see `last_error` |
 | `unavailable` | The user cannot connect: the client has the tool switched off, has not stored its credentials, or no connector is installed |
@@ -134,7 +134,15 @@ Rules:
   its `connect` signature; otherwise `422 invalid_connection_parameters`
   explains what is missing or extra.
 
-Saving replaces earlier parameters and resets the status to `pending`.
+Saving replaces earlier parameters, then **connects with them in the
+same request**. The parameters are committed first, so they are kept
+whatever happens next:
+
+| Outcome | `status` | HTTP |
+|---------|----------|------|
+| The connector accepts | `connected`, with `connection_details` and `last_connected_at` | `200` |
+| The provider refuses, or the client's setup is incomplete (e.g. tool credentials not stored) | `failed`, with the reason in `last_error` | `200` |
+| The type has no usable tool yet (none chosen, switched off, or no connector) | `pending` | `200` |
 
 Response (values are never included):
 
@@ -145,18 +153,22 @@ Response (values are never included):
   "user_uuid": "11111111-1111-4111-8111-111111111111",
   "integration_type_code": "confirm",
   "integration_type_name": "Confirm",
-  "status": "pending",
+  "status": "connected",
   "parameters": {"arg_count": 1, "kwarg_names": ["region"]},
-  "connection_details": {},
+  "connection_details": {"account_ref": "acct-in"},
   "last_error": null,
-  "last_attempt_at": null,
-  "last_connected_at": null,
+  "last_attempt_at": "2026-09-28T12:00:00Z",
+  "last_connected_at": "2026-09-28T12:00:00Z",
   "created_at": "2026-09-28T12:00:00Z",
   "updated_at": "2026-09-28T12:00:00Z"
 }
 ```
 
-### Connect
+### Connect again
+
+Saving already connects. Use this to retry with the saved parameters,
+for example after a `failed` attempt or once the client has finished
+setting the tool up.
 
 ```bash
 curl -X POST \
@@ -193,13 +205,13 @@ curl -X POST \
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: PUT parameters
+    [*] --> connected: PUT parameters, connect succeeds
+    [*] --> failed: PUT parameters, connect fails
+    [*] --> pending: PUT parameters, no usable tool yet
     pending --> connected: connect succeeds
     pending --> failed: connect fails
-    failed --> connected: connect succeeds
-    connected --> failed: connect fails
-    connected --> pending: PUT new parameters
-    failed --> pending: PUT new parameters
+    failed --> connected: PUT or connect succeeds
+    connected --> failed: PUT or connect fails
 ```
 
 ## Errors
