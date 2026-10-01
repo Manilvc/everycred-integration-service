@@ -131,8 +131,7 @@ class UserIntegrationSystem(BaseModel):
     thing, so the EveryCRED frontend can reuse its components.
 
     Attributes:
-        is_connected: The user's last connection attempt succeeded, or
-            the tool is built in.
+        is_connected: The user's last connection attempt succeeded.
         is_active: The user can use the tool: the client has it set up
             and switched on.
         is_default: Always true here; each type lists the tool its users
