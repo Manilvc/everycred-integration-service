@@ -34,6 +34,10 @@ flowchart LR
 | PUT | `/api/v1/client/integrations/{tool_code}` | **Save**: switch and credentials |
 | POST | `/api/v1/client/integrations/{tool_code}/test` | **Test connection** |
 
+The same listing for one of the client's users, with the user's
+connection status, is
+[`GET /api/v1/client/users/{user_uuid}/integrations`](user_connections.md#a-users-integrations-with-connection-status).
+
 ### List
 
 Same envelope and field names as the EveryCRED Integrations screen

@@ -21,6 +21,7 @@ _ATTRIBUTE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 # A dot path into the provider's data, or session.<captured value>.
 _MAPPING_PATH_PATTERN = r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){0,15}$"
 LISTING_MESSAGE = "Integrations retrieved successfully."
+USER_LISTING_MESSAGE = "User integrations retrieved successfully."
 
 
 class CardStatus(StrEnum):
@@ -41,6 +42,24 @@ class CardStatus(StrEnum):
     CONNECTED = "connected"
     FAILED = "failed"
     DISABLED = "disabled"
+    UNAVAILABLE = "unavailable"
+
+
+class UserIntegrationStatus(StrEnum):
+    """Where one user stands with one integration.
+
+    ``not_connected``: the user has no connection for the type yet.
+    ``pending``: parameters saved, not connected since.
+    ``connected`` / ``failed``: result of the last connection attempt.
+    ``unavailable``: the user cannot connect, because the client has
+    switched the tool off, has not stored its credentials, or no
+    connector is installed.
+    """
+
+    NOT_CONNECTED = "not_connected"
+    PENDING = "pending"
+    CONNECTED = "connected"
+    FAILED = "failed"
     UNAVAILABLE = "unavailable"
 
 
@@ -103,6 +122,67 @@ class IntegrationGroup(BaseModel):
     label: str
     description: str | None
     systems: list[IntegrationSystem]
+
+
+class UserIntegrationSystem(BaseModel):
+    """A tool one user can connect through, with the user's status.
+
+    Same fields as :class:`IntegrationSystem` where they mean the same
+    thing, so the EveryCRED frontend can reuse its components.
+
+    Attributes:
+        is_connected: The user's last connection attempt succeeded, or
+            the tool is built in.
+        is_active: The user can use the tool: the client has it set up
+            and switched on.
+        is_default: Always true here; each type lists the tool its users
+            are routed through, plus built-in tools.
+        status: The user's status with this integration.
+        tool_status: The tool's status for the client, as on the
+            client's Integrations screen.
+        connection_id: The user's connection, if one exists.
+        last_error: Safe reason for the last failed attempt.
+    """
+
+    id: uuid.UUID
+    code: str
+    source_role_id: uuid.UUID
+    name: str
+    status_note: str | None
+    is_connected: bool
+    is_active: bool
+    is_default: bool
+    status: UserIntegrationStatus
+    tool_status: CardStatus
+    connection_id: uuid.UUID | None
+    last_attempt_at: datetime | None
+    last_connected_at: datetime | None
+    last_error: str | None
+
+
+class UserIntegrationGroup(BaseModel):
+    """One integration type and the tools a user can connect through."""
+
+    id: uuid.UUID
+    key: str
+    label: str
+    description: str | None
+    systems: list[UserIntegrationSystem]
+
+
+class UserIntegrationsListing(BaseModel):
+    """Every active integration type for one of the client's users."""
+
+    user_uuid: uuid.UUID
+    groups: list[UserIntegrationGroup]
+
+
+class UserIntegrationsListingResponse(BaseModel):
+    """A user's integrations, wrapped like EveryCRED's own responses."""
+
+    status: Literal["success"] = "success"
+    data: UserIntegrationsListing
+    message: str = USER_LISTING_MESSAGE
 
 
 class IntegrationsListing(BaseModel):
