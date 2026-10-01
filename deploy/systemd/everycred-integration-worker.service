@@ -1,0 +1,36 @@
+# EveryCRED Integration Service - background worker, run on the host.
+#
+# Delivers webhooks, expires unfinished sessions, and deletes session
+# results after their retention window. Run exactly one instance:
+# deliveries are not locked across processes.
+#
+# Starts after the API unit, whose start applies migrations first.
+
+[Unit]
+Description=EveryCRED Integration Service - background worker
+Wants=network-online.target everycred-integration-api.service
+After=network-online.target mysql.service everycred-integration-api.service
+
+[Service]
+Type=exec
+User=everycred-local
+Group=everycred-local
+WorkingDirectory=/var/www/everycred-integration-service
+Environment="PATH=/var/www/everycred-integration-service/.venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/var/www/everycred-integration-service/.venv/bin/python -m app.worker
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=everycred-integration-worker
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

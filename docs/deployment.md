@@ -1,9 +1,10 @@
 # Deployment
 
-> Last updated: 2026-09-29
+> Last updated: 2026-09-30
 
-The service runs as a Docker container on the same host as the existing
-EveryCRED backend and is published on the **shared backend domain** under
+The service runs as a Docker container (or, alternatively, as systemd
+services; see [Without Docker](#without-docker-systemd)) on the same host
+as the existing EveryCRED backend and is published on the **shared backend domain** under
 `/integration/`, the same way the audit service is mounted at `/audit/`.
 
 ```mermaid
@@ -33,6 +34,8 @@ flowchart LR
 | `docker-compose.yml` | `migrate` runs once, then `api` starts; port published on loopback only |
 | `docker-compose.mysql-socket.yml` | Optional override: MySQL on the same server through its Unix socket |
 | `deploy/nginx/integration-subpath.conf` | Upstream and `location /integration/` to paste into the existing vhost |
+| `deploy/systemd/everycred-integration-api.service` | Without Docker: API on `127.0.0.1:8030`, migrations before each start |
+| `deploy/systemd/everycred-integration-worker.service` | Without Docker: the background worker |
 | `.dockerignore` | Keeps `.env`, `.venv`, tests, and docs out of the image |
 
 ## 1. Prepare the environment
@@ -238,6 +241,62 @@ curl -X POST https://api-evrc.viitorcloud.in/integration/api/v1/super-admins/reg
 
 Then remove `SUPER_ADMIN_BOOTSTRAP_TOKEN` from `.env` and run
 `docker compose up -d` to apply it.
+
+## Without Docker: systemd
+
+The same service can run directly on the host as two systemd units, like
+the audit service. Use either Docker or systemd, not both: both listen on
+`127.0.0.1:8030`.
+
+Running on the host also avoids the container networking of the MySQL
+setup above: `localhost` is the host's MySQL, so a MySQL account for
+`'localhost'` is enough and `bind-address` and the firewall stay as they
+are.
+
+1. Install uv (once) and the dependencies into `.venv`:
+
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh    # installs to ~/.local/bin
+   cd /var/www/everycred-integration-service
+   ~/.local/bin/uv sync --frozen --no-dev
+   ```
+
+2. Create the MySQL account for `localhost` and point `.env` at the
+   socket (no `COMPOSE_FILE` or `MYSQL_SOCKET_DIR` lines):
+
+   ```sql
+   CREATE USER 'everycred_integration'@'localhost' IDENTIFIED BY '<password>';
+   GRANT ALL PRIVILEGES ON everycred_integration.* TO 'everycred_integration'@'localhost';
+   ```
+
+   ```dotenv
+   DATABASE_URL=mysql+aiomysql://everycred_integration:<password>@localhost/everycred_integration?unix_socket=/var/run/mysqld/mysqld.sock&charset=utf8mb4
+   ```
+
+3. Stop the containers, then install and start the units:
+
+   ```bash
+   docker compose down
+   sudo cp deploy/systemd/everycred-integration-*.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now everycred-integration-api everycred-integration-worker
+   systemctl status everycred-integration-api everycred-integration-worker
+   curl -s http://127.0.0.1:8030/health/ready
+   ```
+
+The units run as `everycred-local`, which must be able to read `.env`
+(`chmod 640 .env`). Each API start first runs
+`python -m app.core.db_check` and `alembic upgrade head`; if either fails
+the API does not start, and the reason is in the journal:
+
+```bash
+journalctl -u everycred-integration-api -n 50 --no-pager
+journalctl -u everycred-integration-worker -f
+```
+
+To update: `git pull`, `uv sync --frozen --no-dev`, then
+`sudo systemctl restart everycred-integration-api everycred-integration-worker`.
+The nginx location is the same as for Docker.
 
 ## Updating
 

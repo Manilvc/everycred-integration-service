@@ -1,3 +1,5 @@
 # Shell scripts run inside Linux containers; CRLF line endings would break
 # their shebang line ("/bin/sh\r: not found").
 *.sh text eol=lf
+# systemd unit files are read on Linux servers.
+*.service text eol=lf
