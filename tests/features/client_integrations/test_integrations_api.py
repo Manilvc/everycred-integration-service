@@ -520,17 +520,14 @@ async def user_systems(
 async def connect_user_to_idme(client: AsyncClient, setup: dict) -> None:
     saved = await save(client, setup, "idme", credentials={"api_key": "k"})
     assert saved.status_code == 200, saved.text
+    # Saving a user's connection connects it.
     params = await client.put(
         f"/api/v1/client/users/{USER}/connections/confirm",
         json={"kwargs": {"id": "doc-1"}},
         headers=setup["key"],
     )
     assert params.status_code == 200, params.text
-    connected = await client.post(
-        f"/api/v1/client/users/{USER}/connections/confirm/connect",
-        headers=setup["key"],
-    )
-    assert connected.status_code == 200, connected.text
+    assert params.json()["status"] == "connected"
 
 
 async def test_user_listing_requires_api_key(client: AsyncClient) -> None:
@@ -600,16 +597,10 @@ async def test_user_status_follows_the_connection(
         json={"kwargs": {"id": "doc-1"}},
         headers=setup["key"],
     )
-    saved = (await user_systems(client, setup))["confirm"]["idme"]
-    await client.post(
-        f"/api/v1/client/users/{USER}/connections/confirm/connect",
-        headers=setup["key"],
-    )
     connected = (await user_systems(client, setup))["confirm"]["idme"]
 
     assert (before["status"], before["is_active"]) == ("not_connected", True)
-    assert saved["status"] == "pending"
-    assert saved["connection_id"] is not None
+    assert connected["connection_id"] is not None
     assert connected["status"] == "connected"
     assert connected["is_connected"] is True
     assert connected["last_connected_at"] is not None
@@ -705,3 +696,19 @@ async def test_unknown_status_filter_is_rejected(
     )
 
     assert response.status_code == 422
+
+
+async def test_saving_without_client_credentials_is_saved_as_failed(
+    client: AsyncClient, setup: dict
+) -> None:
+    # The client has not stored ID.me's api_key, so connecting cannot
+    # work; the user's inputs are still saved.
+    response = await client.put(
+        f"/api/v1/client/users/{USER}/connections/confirm",
+        json={"kwargs": {"id": "doc-1"}},
+        headers=setup["key"],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert "api_key" in response.json()["last_error"]

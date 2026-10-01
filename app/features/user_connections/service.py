@@ -58,8 +58,10 @@ from app.features.user_connections.exceptions import (
     ConnectionNotFoundError,
     InvalidConnectionParametersError,
     InvalidInputsError,
+    MissingInputsError,
     OperationFailedError,
     OperationNotFoundError,
+    ToolCredentialsMissingError,
 )
 from app.features.user_connections.models import (
     LAST_ERROR_MAX_LENGTH,
@@ -200,10 +202,15 @@ class UserConnectionService:
         integration_type_code: str,
         parameters: ConnectionParameters,
     ) -> UserConnectionResponse:
-        """Create or replace the user's inputs in the secret store.
+        """Save the user's inputs, then connect with them straight away.
 
-        Saving resets the connection to ``pending``: the new inputs have
-        not been tried yet.
+        Inputs go to the secret store and are committed first, so they
+        are kept even if connecting fails. The connection then ends as
+        ``connected``, or ``failed`` with the reason in ``last_error``
+        (a provider refusal or a setup problem such as missing tool
+        credentials; the save itself still succeeds). It stays
+        ``pending`` only when the type has no tool to connect through
+        yet: none chosen, switched off, or without a connector.
 
         Raises:
             IntegrationTypeNotFoundError: Unknown integration type.
@@ -281,7 +288,40 @@ class UserConnectionService:
             user_uuid,
             client.id,
         )
-        return self._to_response(connection, integration_type, tool)
+
+        try:
+            target = await self._get_callable(client, integration_type_code)
+        except AppError as exc:
+            # Nothing to connect through yet; the inputs are kept for
+            # when the client finishes setting the tool up.
+            logger.info(
+                "Connection %s left pending: %s", connection.id, exc.error_code
+            )
+            return self._to_response(connection, integration_type, tool)
+
+        connector = await self._build_connector(target, client, user_uuid)
+        connection.last_attempt_at = utc_now()
+        try:
+            await self._run_connector(
+                connector.connect,
+                parameters.args,
+                parameters.kwargs,
+                connection,
+                target.tool.code,
+            )
+        except (
+            MissingInputsError,
+            ToolCredentialsMissingError,
+            InvalidInputsError,
+        ) as exc:
+            # The save succeeded; record why connecting did not, instead
+            # of failing a request whose inputs are already stored.
+            connection.status = ConnectionStatus.FAILED
+            connection.last_error = exc.message[:LAST_ERROR_MAX_LENGTH]
+        await self.session.commit()
+        return self._to_response(
+            connection, target.integration_type, target.tool
+        )
 
     async def connect(
         self, client: Client, user_uuid: uuid.UUID, integration_type_code: str

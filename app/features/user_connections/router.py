@@ -94,7 +94,7 @@ async def get_user_connection(
 @router.put(
     "/{integration_type_code}",
     response_model=UserConnectionResponse,
-    summary="Save a user's connection parameters",
+    summary="Save a user's connection parameters and connect",
     responses={
         **_TYPE_ERRORS,
         status.HTTP_422_UNPROCESSABLE_CONTENT: {
@@ -110,10 +110,13 @@ async def save_user_connection(
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
 ) -> UserConnectionResponse:
-    """Store ``args`` and ``kwargs`` for the connector, encrypted.
+    """Store ``args`` and ``kwargs``, encrypted, and connect with them.
 
-    Replaces any earlier parameters and resets the status to
-    ``pending``. Call the connect endpoint to use them.
+    Replaces any earlier parameters, then runs the connector right away.
+    The response's `status` is `connected`, or `failed` with the reason
+    in `last_error` (the parameters are still saved). It stays `pending`
+    only when the type has no usable tool yet. The connect endpoint
+    retries with the saved parameters.
     """
     return await service.save_parameters(
         current_client, user_uuid, integration_type_code, parameters
@@ -123,7 +126,7 @@ async def save_user_connection(
 @router.post(
     "/{integration_type_code}/connect",
     response_model=UserConnectionResponse,
-    summary="Connect the user using the saved parameters",
+    summary="Connect again with the saved parameters",
     responses={
         **_TYPE_ERRORS,
         status.HTTP_422_UNPROCESSABLE_CONTENT: {

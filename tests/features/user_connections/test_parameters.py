@@ -35,11 +35,13 @@ async def test_saving_parameters_hides_values_in_response(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "pending"
+    assert body["status"] == "connected"
     assert body["user_uuid"] == USER_UUID
     assert body["parameters"] == {"arg_count": 1, "kwarg_names": ["region"]}
     assert SECRET_TOKEN not in response.text
-    assert "eu" not in response.text
+    # Saving connects, and the fake connector reports the region back in
+    # connection_details; the saved inputs themselves are never echoed.
+    assert "eu" not in str(body["parameters"])
 
 
 async def test_parameters_are_kept_in_the_secret_store(
