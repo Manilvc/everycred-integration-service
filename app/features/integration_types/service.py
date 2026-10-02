@@ -4,6 +4,7 @@ from app.features.integration_types.repository import (
     IntegrationTypeRepository,
 )
 from app.features.integration_types.schemas import (
+    DirectionFilter,
     IntegrationTypeFilters,
     IntegrationTypeResponse,
 )
@@ -28,6 +29,11 @@ class IntegrationTypeService:
             include_inactive=filters.include_inactive,
             limit=filters.limit,
             offset=filters.offset,
+            direction=(
+                None
+                if filters.direction is DirectionFilter.ALL
+                else filters.direction.value
+            ),
         )
         return Page[IntegrationTypeResponse](
             items=[

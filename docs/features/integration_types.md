@@ -1,7 +1,7 @@
 # Integration Types
 
 > Package: `app/features/integration_types/`
-> Last updated: 2026-09-28
+> Last updated: 2026-10-02
 
 ## Overview
 
@@ -28,11 +28,16 @@ Query parameters:
 | `limit`            | `20`    | 1–100    | Page size                        |
 | `offset`           | `0`     | ≥ 0      | Rows to skip                     |
 | `include_inactive` | `false` |          | Also return types switched off   |
+| `direction`        | `all`   | `all`, `inbound`, `outbound` | Only types of this direction; `all` (or leaving it out) returns both |
 
 Unknown parameters are rejected with `422`.
 
 ```bash
 curl http://localhost:8000/v1/integration-types \
+  -H "Authorization: Bearer <super admin access token>"
+
+# Inbound types only: confirm, gather, declare
+curl "http://localhost:8000/v1/integration-types?direction=inbound" \
   -H "Authorization: Bearer <super admin access token>"
 ```
 
@@ -48,6 +53,7 @@ Response `200 OK`:
       "description": null,
       "is_active": true,
       "display_order": 10,
+      "direction": "inbound",
       "created_at": "2026-09-28T08:33:39Z",
       "updated_at": "2026-09-28T08:33:39Z"
     }
@@ -66,7 +72,7 @@ Errors:
 |--------|-------------------------|----------------------------------------|
 | 401    | `authentication_failed` | No token, or an invalid/expired token  |
 | 403    | `permission_denied`     | Token belongs to a role other than super admin |
-| 422    | `validation_error`      | `limit`/`offset` out of range, unknown parameter |
+| 422    | `validation_error`      | `limit`/`offset` out of range, unknown `direction`, unknown parameter |
 
 ## Adding a type
 
@@ -75,11 +81,15 @@ UTC:
 
 ```sql
 INSERT INTO integration_types
-    (id, code, name, description, is_active, display_order, created_at, updated_at)
+    (id, code, name, description, is_active, display_order, direction, created_at, updated_at)
 VALUES
-    (REPLACE(UUID(), '-', ''), 'payments', 'Payments', NULL, 1, 50,
+    (REPLACE(UUID(), '-', ''), 'payments', 'Payments', NULL, 1, 60, 'outbound',
      UTC_TIMESTAMP(), UTC_TIMESTAMP());
 ```
+
+- `direction` is `inbound` (data comes into EveryCRED) or `outbound`
+  (EveryCRED acts on or reports to other systems). Left out, it is
+  `inbound`.
 
 - Choose `display_order` to place it in the list; the seed uses steps of
   10 so a type can be slotted between existing ones.
@@ -104,7 +114,7 @@ sequenceDiagram
     Auth-->>Client: 401 / 403 if not a super admin
     Auth->>Router: allowed
     Router->>Service: list_integration_types(filters)
-    Service->>Repo: list_page(include_inactive, limit, offset)
+    Service->>Repo: list_page(include_inactive, limit, offset, direction)
     Repo->>DB: SELECT COUNT(*) + SELECT page
     DB-->>Repo: rows, total
     Repo-->>Service: rows, total
@@ -123,17 +133,19 @@ Table `integration_types` (migration `18ecd5dab8cc`):
 | `description`   | `TEXT`         | Nullable                          |
 | `is_active`     | `TINYINT(1)`   | Default `1`                       |
 | `display_order` | `INT`          | Default `0`                       |
+| `direction`     | `VARCHAR(20)`  | `inbound` (default) or `outbound` |
 | `created_at`, `updated_at` | `DATETIME` | UTC                        |
 
-Seeded rows (migrations `18ecd5dab8cc` and `c5f3f5bf92e7`):
+Seeded rows (migrations `18ecd5dab8cc`, `c5f3f5bf92e7`, and
+`6826c2876281` for `direction`):
 
-| `code`        | `name`      | `description`                  | `display_order` |
-|---------------|-------------|--------------------------------|-----------------|
-| `confirm`     | Confirm     | Identity & verification        | 10              |
-| `gather`      | Gather      | Systems of record (read-only)  | 20              |
-| `declare`     | Declare     | Holder & issuer input          | 30              |
-| `enforcement` | Enforcement | Physical access systems        | 40              |
-| `records`     | Records     | Audit & evidence               | 50              |
+| `code`        | `name`      | `description`                  | `display_order` | `direction` |
+|---------------|-------------|--------------------------------|-----------------|-------------|
+| `confirm`     | Confirm     | Identity & verification        | 10              | inbound     |
+| `gather`      | Gather      | Systems of record (read-only)  | 20              | inbound     |
+| `declare`     | Declare     | Holder & issuer input          | 30              | inbound     |
+| `enforcement` | Enforcement | Physical access systems        | 40              | outbound    |
+| `records`     | Records     | Audit & evidence               | 50              | outbound    |
 
 The second migration only fills in empty descriptions and moves
 `enforcement` and `records` if they are still at their seeded order, so

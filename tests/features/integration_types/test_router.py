@@ -17,13 +17,19 @@ async def seeded_types(
         session.add_all(
             [
                 IntegrationType(
-                    code="records", name="Records", display_order=40
+                    code="records",
+                    name="Records",
+                    display_order=40,
+                    direction="outbound",
                 ),
                 IntegrationType(
                     code="confirm", name="Confirm", display_order=10
                 ),
                 IntegrationType(
-                    code="enforcement", name="Enforcement", display_order=30
+                    code="enforcement",
+                    name="Enforcement",
+                    display_order=30,
+                    direction="outbound",
                 ),
                 IntegrationType(
                     code="gather", name="Gather", display_order=20
@@ -159,6 +165,71 @@ async def test_invalid_query_parameters_are_rejected(
 ) -> None:
     response = await client.get(
         LIST_URL, params=params, headers=super_admin_headers
+    )
+
+    assert response.status_code == 422
+
+
+async def test_every_type_shows_its_direction(
+    client: AsyncClient,
+    super_admin_headers: dict[str, str],
+    seeded_types: None,
+) -> None:
+    response = await client.get(LIST_URL, headers=super_admin_headers)
+
+    assert {
+        item["code"]: item["direction"] for item in response.json()["items"]
+    } == {
+        "confirm": "inbound",
+        "gather": "inbound",
+        "enforcement": "outbound",
+        "records": "outbound",
+    }
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected"),
+    [
+        ("inbound", ["confirm", "gather"]),
+        ("outbound", ["enforcement", "records"]),
+        ("all", ["confirm", "gather", "enforcement", "records"]),
+    ],
+)
+async def test_direction_filters_the_listing(
+    client: AsyncClient,
+    super_admin_headers: dict[str, str],
+    seeded_types: None,
+    direction: str,
+    expected: list[str],
+) -> None:
+    response = await client.get(
+        LIST_URL, params={"direction": direction}, headers=super_admin_headers
+    )
+
+    body = response.json()
+    assert [item["code"] for item in body["items"]] == expected
+    assert body["total"] == len(expected)
+
+
+async def test_new_types_are_inbound_by_default(
+    client: AsyncClient,
+    super_admin_headers: dict[str, str],
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(IntegrationType(code="declare", name="Declare"))
+        await session.commit()
+
+    response = await client.get(LIST_URL, headers=super_admin_headers)
+
+    assert response.json()["items"][0]["direction"] == "inbound"
+
+
+async def test_unknown_direction_is_rejected(
+    client: AsyncClient, super_admin_headers: dict[str, str]
+) -> None:
+    response = await client.get(
+        LIST_URL, params={"direction": "sideways"}, headers=super_admin_headers
     )
 
     assert response.status_code == 422
