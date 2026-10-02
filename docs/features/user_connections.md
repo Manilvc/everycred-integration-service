@@ -1,7 +1,7 @@
 # User Connections
 
 > Package: `app/features/user_connections/` (connectors in `app/connectors/`)
-> Last updated: 2026-10-01
+> Last updated: 2026-10-02
 
 ## Overview
 
@@ -113,6 +113,13 @@ built-in tools such as the Holder Wallet App.
 - Other statuses are returned only when asked for with `status`
   (repeatable), e.g. `?status=not_connected&status=pending` for tools
   the user has not finished connecting.
+- `?integration_type=confirm` (repeatable) keeps only those types'
+  groups; without it every type is listed. An unknown code matches
+  nothing.
+
+`GET /v1/client/users/{user_uuid}/connections` takes the same
+`integration_type` filter (repeatable); without it, all of the user's
+connections are returned.
 
 ### Save parameters
 

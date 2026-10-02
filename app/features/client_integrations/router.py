@@ -13,6 +13,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
+from pydantic import StringConstraints
 
 from app.features.client_integrations.dependencies import (
     ClientIntegrationServiceDep,
@@ -30,6 +31,7 @@ from app.features.clients.dependencies import (
     get_current_client,
 )
 from app.features.integration_tools.models import TOOL_CODE_MAX_LENGTH
+from app.features.integration_types.models import CODE_MAX_LENGTH
 from app.shared.schemas import ErrorResponse
 
 router = APIRouter(
@@ -57,6 +59,7 @@ user_router = APIRouter(
 )
 
 ToolCode = Annotated[str, Path(min_length=1, max_length=TOOL_CODE_MAX_LENGTH)]
+MAX_TYPE_FILTERS = 20
 _TOOL_ERRORS = {
     status.HTTP_404_NOT_FOUND: {
         "model": ErrorResponse,
@@ -172,6 +175,18 @@ async def list_user_integrations(
             ),
         ),
     ] = None,
+    integration_types: Annotated[
+        list[Annotated[str, StringConstraints(max_length=CODE_MAX_LENGTH)]]
+        | None,
+        Query(
+            alias="integration_type",
+            max_length=MAX_TYPE_FILTERS,
+            description=(
+                "Integration type codes to return, e.g. `confirm`; repeat "
+                "for several. Without it, every type is returned."
+            ),
+        ),
+    ] = None,
 ) -> UserIntegrationsListingResponse:
     """Return the tools the user is connected to, grouped by type.
 
@@ -185,9 +200,13 @@ async def list_user_integrations(
     `failed`, `not_connected`, or `unavailable` (the client has the tool
     switched off or not set up). `tool_status` is the tool's status on
     the client's own screen.
+
+    `integration_type` (repeatable) keeps only those groups, e.g.
+    `?integration_type=confirm`; without it every type is listed.
     """
     return await service.list_user_integrations(
         current_client,
         user_uuid,
         statuses=status_filter or [UserIntegrationStatus.CONNECTED],
+        integration_type_codes=integration_types,
     )

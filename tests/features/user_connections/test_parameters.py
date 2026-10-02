@@ -221,3 +221,34 @@ async def test_different_users_of_one_client_are_separate(
     )
 
     assert response.json() == []
+
+
+async def test_listing_filters_by_integration_type(
+    client: AsyncClient, client_headers: dict[str, str]
+) -> None:
+    for code in ("confirm", "gather", "enforcement"):
+        await client.put(
+            connection_url(code), json={"args": ["t"]}, headers=client_headers
+        )
+
+    unfiltered = await client.get(connection_url(), headers=client_headers)
+    one = await client.get(
+        connection_url(),
+        params={"integration_type": "gather"},
+        headers=client_headers,
+    )
+    several = await client.get(
+        connection_url(),
+        params=[
+            ("integration_type", "confirm"),
+            ("integration_type", "gather"),
+        ],
+        headers=client_headers,
+    )
+
+    def codes(response) -> list[str]:
+        return [item["integration_type_code"] for item in response.json()]
+
+    assert codes(unfiltered) == ["confirm", "gather", "enforcement"]
+    assert codes(one) == ["gather"]
+    assert codes(several) == ["confirm", "gather"]

@@ -265,6 +265,7 @@ class ClientIntegrationService:
         user_uuid: uuid.UUID,
         *,
         statuses: Collection[UserIntegrationStatus] | None = None,
+        integration_type_codes: Collection[str] | None = None,
     ) -> UserIntegrationsListingResponse:
         """Return every active type with the user's status for each tool.
 
@@ -277,7 +278,9 @@ class ClientIntegrationService:
             client: The calling client.
             user_uuid: The client's id for the user.
             statuses: Keep only systems with these statuses, e.g.
-                ``{connected}``. Groups are always all listed.
+                ``{connected}``. Groups are still all listed.
+            integration_type_codes: Keep only these types' groups; all
+                types when empty or None.
         """
         catalogue = await self._load_catalogue(client)
         connection_by_type_id = {
@@ -288,6 +291,11 @@ class ClientIntegrationService:
         }
         groups = []
         for integration_type in catalogue.integration_types:
+            if (
+                integration_type_codes
+                and integration_type.code not in integration_type_codes
+            ):
+                continue
             config = catalogue.config_by_type_id.get(integration_type.id)
             chosen_tool_id = config.integration_tool_id if config else None
             systems = [
