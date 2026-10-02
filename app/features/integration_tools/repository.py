@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Collection, Sequence
 from typing import Any
 
-from sqlalchemy import delete, false, func, or_, select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.integration_tools.models import (
@@ -162,20 +162,32 @@ class IntegrationToolFieldRepository:
     ) -> None:
         """Make ``fields`` the whole list for one scope of a tool.
 
-        Staged only; the caller commits, so the old list is replaced
-        atomically.
+        A field already in the list (same flow and key) is updated in
+        place, so its id never changes and stays usable as a reference;
+        new ones are added and missing ones deleted. Staged only; the
+        caller commits, so the list changes atomically.
         """
-        await self.session.execute(
-            delete(IntegrationToolField).where(
+        existing = await self.session.scalars(
+            select(IntegrationToolField).where(
                 IntegrationToolField.integration_tool_id
                 == integration_tool_id,
                 self._in_scopes([client_id]),
             )
         )
+        current = {(field.flow, field.key): field for field in existing}
+        wanted = {(field.flow, field.key) for field in fields}
+        for key, stale in current.items():
+            if key not in wanted:
+                await self.session.delete(stale)
         for field in fields:
-            field.integration_tool_id = integration_tool_id
-            field.client_id = client_id
-            self.session.add(field)
+            kept = current.get((field.flow, field.key))
+            if kept is None:
+                field.integration_tool_id = integration_tool_id
+                field.client_id = client_id
+                self.session.add(field)
+            else:
+                kept.label = field.label
+                kept.value_type = field.value_type
 
     @staticmethod
     def _in_scopes(client_ids: Collection[uuid.UUID | None]) -> Any:

@@ -335,6 +335,7 @@ class IntegrationToolService:
         field: IntegrationToolField,
     ) -> IntegrationToolFieldResponse:
         return IntegrationToolFieldResponse(
+            id=field.id,
             flow=field.flow,
             key=field.key,
             label=field.label,

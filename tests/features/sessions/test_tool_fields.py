@@ -219,3 +219,60 @@ async def test_only_super_admins_manage_fields(
     assert with_api_key.status_code == 401
     assert anonymous.status_code == 401
     assert client_anonymous.status_code == 401
+
+
+def ids_by_key(page: dict[str, Any]) -> dict[str, str]:
+    return {field["key"]: field["id"] for field in page["items"]}
+
+
+async def test_every_field_has_an_id(
+    client: AsyncClient, setup: dict[str, Any]
+) -> None:
+    await save_tool(client, setup, GLOBAL_FIELDS)
+
+    response = await client.get(CLIENT_FIELDS_URL, headers=setup["key"])
+
+    ids = ids_by_key(response.json())
+    assert set(ids) == {"full_name", "dob", "address.zip"}
+    assert len(set(ids.values())) == 3
+
+
+async def test_saving_again_keeps_field_ids(
+    client: AsyncClient, setup: dict[str, Any]
+) -> None:
+    await save_tool(client, setup, GLOBAL_FIELDS)
+    before = ids_by_key(
+        (await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])).json()
+    )
+
+    relabelled = [
+        {**GLOBAL_FIELDS[0], "label": "Name as on Aadhaar"},
+        GLOBAL_FIELDS[1],
+        {"flow": "aadhaar_otp", "key": "gender", "label": "Gender"},
+    ]
+    await save_tool(client, setup, relabelled)
+    after_page = (
+        await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
+    ).json()
+    after = ids_by_key(after_page)
+
+    # Kept fields keep their id, even when their label changes.
+    assert after["full_name"] == before["full_name"]
+    assert after["dob"] == before["dob"]
+    # Removed fields are gone; new ones get a new id.
+    assert "address.zip" not in after
+    assert after["gender"] not in before.values()
+    full_name = next(f for f in after_page["items"] if f["key"] == "full_name")
+    assert full_name["label"] == "Name as on Aadhaar"
+
+
+async def test_client_field_ids_are_kept_too(
+    client: AsyncClient, setup: dict[str, Any]
+) -> None:
+    url = client_fields_url(setup["client_id"])
+    body = {"fields": [{"flow": "aadhaar_otp", "key": "care_of"}]}
+
+    first = await client.put(url, json=body, headers=setup["admin"])
+    second = await client.put(url, json=body, headers=setup["admin"])
+
+    assert ids_by_key(first.json()) == ids_by_key(second.json())
