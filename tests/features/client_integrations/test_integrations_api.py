@@ -712,3 +712,40 @@ async def test_saving_without_client_credentials_is_saved_as_failed(
     assert response.status_code == 200
     assert response.json()["status"] == "failed"
     assert "api_key" in response.json()["last_error"]
+
+
+async def test_user_listing_filters_by_integration_type(
+    client: AsyncClient, setup: dict
+) -> None:
+    one = await client.get(
+        user_url(),
+        params=[*ALL_USER_STATUSES, ("integration_type", "confirm")],
+        headers=setup["key"],
+    )
+    several = await client.get(
+        user_url(),
+        params=[
+            *ALL_USER_STATUSES,
+            ("integration_type", "confirm"),
+            ("integration_type", "declare"),
+        ],
+        headers=setup["key"],
+    )
+    unfiltered = await client.get(
+        user_url(), params=ALL_USER_STATUSES, headers=setup["key"]
+    )
+    unknown = await client.get(
+        user_url(),
+        params={"integration_type": "no-such-type"},
+        headers=setup["key"],
+    )
+
+    assert list(systems_by_key(one.json())) == ["confirm"]
+    assert list(systems_by_key(several.json())) == ["confirm", "declare"]
+    assert list(systems_by_key(unfiltered.json())) == [
+        "confirm",
+        "gather",
+        "declare",
+    ]
+    assert unknown.status_code == 200
+    assert unknown.json()["data"]["groups"] == []

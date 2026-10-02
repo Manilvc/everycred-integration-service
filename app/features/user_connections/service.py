@@ -11,7 +11,7 @@ import logging
 import time
 import traceback
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
 import httpx
@@ -154,10 +154,27 @@ class UserConnectionService:
         )
 
     async def list_connections(
-        self, client: Client, user_uuid: uuid.UUID
+        self,
+        client: Client,
+        user_uuid: uuid.UUID,
+        *,
+        integration_type_codes: Collection[str] | None = None,
     ) -> list[UserConnectionResponse]:
-        """Return every connection of one of the client's users."""
+        """Return a user's connections, optionally for some types only.
+
+        Args:
+            client: The calling client.
+            user_uuid: The client's id for the user.
+            integration_type_codes: Keep only connections of these
+                types; all of them when empty or None.
+        """
         rows = await self.connections.list_for_user(client.id, user_uuid)
+        if integration_type_codes:
+            rows = [
+                (connection, integration_type)
+                for connection, integration_type in rows
+                if integration_type.code in integration_type_codes
+            ]
         config_rows = await self.client_configs.list_with_types(
             client.id, usable_only=False
         )

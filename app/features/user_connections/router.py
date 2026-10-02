@@ -8,7 +8,8 @@ its own users.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Depends, Path, Query, status
+from pydantic import StringConstraints
 
 from app.connectors.http.config import OPERATION_NAME_PATTERN
 from app.features.clients.dependencies import (
@@ -26,6 +27,8 @@ from app.features.user_connections.schemas import (
     UserConnectionResponse,
 )
 from app.shared.schemas import ErrorResponse
+
+MAX_TYPE_FILTERS = 20
 
 OperationName = Annotated[
     str, Path(min_length=1, max_length=64, pattern=OPERATION_NAME_PATTERN)
@@ -68,9 +71,27 @@ async def list_user_connections(
     user_uuid: uuid.UUID,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
+    integration_types: Annotated[
+        list[Annotated[str, StringConstraints(max_length=CODE_MAX_LENGTH)]]
+        | None,
+        Query(
+            alias="integration_type",
+            max_length=MAX_TYPE_FILTERS,
+            description=(
+                "Integration type codes to return, e.g. `confirm`; repeat "
+                "for several. Without it, every type is returned."
+            ),
+        ),
+    ] = None,
 ) -> list[UserConnectionResponse]:
-    """Return every connection of the user, with parameter values hidden."""
-    return await service.list_connections(current_client, user_uuid)
+    """Return the user's connections, with parameter values hidden.
+
+    `integration_type` (repeatable) keeps only those types, e.g.
+    `?integration_type=confirm`; without it every connection is returned.
+    """
+    return await service.list_connections(
+        current_client, user_uuid, integration_type_codes=integration_types
+    )
 
 
 @router.get(
