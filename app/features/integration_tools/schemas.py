@@ -7,7 +7,10 @@ from typing import Annotated
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.connectors.http.config import HttpConnectorConfig
+from app.connectors.http.config import (
+    OPERATION_NAME_PATTERN,
+    HttpConnectorConfig,
+)
 from app.features.integration_tools.models import (
     PROVIDER_MAX_LENGTH,
     TOOL_NAME_MAX_LENGTH,
@@ -32,8 +35,38 @@ class IntegrationToolFilters(ClientToolFilters):
     include_inactive: bool = False
 
 
+class ToolFieldFilters(PaginationParams):
+    """Query parameters for a tool's recorded field keys."""
+
+    flow: str | None = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Only fields returned by this flow.",
+    )
+
+
 IntegrationToolQuery = Annotated[IntegrationToolFilters, Query()]
 ClientToolQuery = Annotated[ClientToolFilters, Query()]
+ToolFieldQuery = Annotated[ToolFieldFilters, Query()]
+
+
+class IntegrationToolFieldResponse(BaseModel):
+    """A field key a provider has returned; the value is never stored.
+
+    Attributes:
+        key: Dot path of the field in the provider's response data,
+            e.g. ``full_name`` or ``address.zip``.
+        value_type: JSON type last seen: ``string``, ``number``,
+            ``boolean``, ``object``, ``array``, or ``null``.
+        first_seen_at: When a completed session first returned it.
+        last_seen_at: When a completed session last returned it.
+    """
+
+    flow: str
+    key: str
+    value_type: str
+    first_seen_at: datetime
+    last_seen_at: datetime
 
 
 class IntegrationTypeSummary(BaseModel):

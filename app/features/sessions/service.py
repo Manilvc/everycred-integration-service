@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.base import (
@@ -34,14 +35,14 @@ from app.connectors.base import (
 from app.connectors.http.config import FlowCondition, FlowConfig
 from app.core.config import Settings
 from app.core.context import get_request_id
-from app.core.data_paths import MISSING, read_path
+from app.core.data_paths import MISSING, describe_paths, read_path
 from app.core.exceptions import AppError
 from app.core.models import utc_now
 from app.core.secret_store import SecretStore, SecretStoreError
-from app.features.client_integrations.repository import (
-    ClientToolConnectionRepository,
-)
 from app.features.clients.models import Client
+from app.features.integration_tools.repository import (
+    IntegrationToolFieldRepository,
+)
 from app.features.sessions.exceptions import (
     FlowNotFoundError,
     ResultExpiredError,
@@ -175,8 +176,6 @@ class SessionService:
         session: Unit of work; committed here.
         sessions: Persistence for sessions.
         targets: Resolves the client's tool for a type.
-        tool_connections: The client's per-tool settings, including
-            ``field_mappings``.
         secret_store: Holds session inputs and results.
         webhooks: Queues status events for the client.
         settings: Timeouts, session lifetime, and retention.
@@ -187,7 +186,6 @@ class SessionService:
         session: AsyncSession,
         sessions: SessionRepository,
         targets: IntegrationTargetResolver,
-        tool_connections: ClientToolConnectionRepository,
         secret_store: SecretStore,
         webhooks: WebhookService,
         settings: Settings,
@@ -195,7 +193,8 @@ class SessionService:
         self.session = session
         self.sessions = sessions
         self.targets = targets
-        self.tool_connections = tool_connections
+        # Field keys seen in completed sessions, written after commit.
+        self._seen_fields: list[tuple[uuid.UUID, str, dict[str, str]]] = []
         self.secret_store = secret_store
         self.webhooks = webhooks
         self.settings = settings
@@ -256,7 +255,7 @@ class SessionService:
         )
         state = FlowState(inputs=dict(request.inputs))
         await self._advance(integration_session, client, target, flow, state)
-        await self.session.commit()
+        await self._commit_and_record_fields()
         return self._to_response(integration_session)
 
     async def submit_inputs(
@@ -314,7 +313,7 @@ class SessionService:
 
         state.inputs.update(request.inputs)
         await self._advance(integration_session, client, target, flow, state)
-        await self.session.commit()
+        await self._commit_and_record_fields()
         return self._to_response(integration_session)
 
     async def get(
@@ -622,6 +621,11 @@ class SessionService:
         data: Any,
     ) -> None:
         """Decide the outcome, store the result, and finish."""
+        # Keys and types only; recorded whatever the outcome, since the
+        # provider answered either way.
+        self._seen_fields.append(
+            (target.tool.id, integration_session.flow, describe_paths(data))
+        )
         if flow.purpose == SessionPurpose.VERIFICATION and not all(
             condition_holds(data, condition)
             for condition in flow.verified_when
@@ -629,13 +633,7 @@ class SessionService:
             await self._provider_rejected(integration_session)
             return
 
-        outputs = {
-            **flow.outputs,
-            **await self._field_mappings(
-                client, target, integration_session.flow
-            ),
-        }
-        attributes = map_outputs(outputs, data, state.captured)
+        attributes = map_outputs(flow.outputs, data, state.captured)
         now = utc_now()
         if attributes:
             try:
@@ -801,16 +799,40 @@ class SessionService:
             )
         return target, flow
 
-    async def _field_mappings(
-        self, client: Client, target: IntegrationTarget, flow_name: str
-    ) -> dict[str, str]:
-        """The client's overrides of this flow's outputs, if any."""
-        tool_connection = await self.tool_connections.get(
-            client.id, target.tool.id
-        )
-        if tool_connection is None:
-            return {}
-        return dict((tool_connection.field_mappings or {}).get(flow_name, {}))
+    async def _commit_and_record_fields(self) -> None:
+        """Commit the session, then record the field keys it saw.
+
+        The keys are written in a separate transaction after the session
+        is committed, so a failure here (two sessions recording the same
+        new key at once, say) never undoes or fails the session itself;
+        the keys are recorded again by the next completed session.
+        """
+        await self.session.commit()
+        seen, self._seen_fields = self._seen_fields, []
+        if not seen:
+            return
+        try:
+            async with AsyncSession(
+                self.session.bind, expire_on_commit=False
+            ) as fields_session:
+                fields = IntegrationToolFieldRepository(fields_session)
+                for tool_id, flow_name, types_by_key in seen:
+                    new_keys = await fields.record(
+                        tool_id, flow_name, types_by_key, utc_now()
+                    )
+                    if new_keys:
+                        logger.info(
+                            "Recorded %s new field keys for flow %s",
+                            new_keys,
+                            flow_name,
+                        )
+                await fields_session.commit()
+        except SQLAlchemyError:
+            logger.warning(
+                "Field keys could not be recorded; the next completed "
+                "session will record them",
+                exc_info=True,
+            )
 
     @staticmethod
     def _flow_or_raise(target: IntegrationTarget, name: str) -> FlowConfig:

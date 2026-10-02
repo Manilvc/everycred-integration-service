@@ -8,18 +8,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.connectors.http.config import OPERATION_NAME_PATTERN
 from app.features.clients.schemas import (
     CREDENTIAL_NAME_PATTERN,
     MAX_CREDENTIAL_VALUE_LENGTH,
     MAX_CREDENTIALS,
 )
 
-MAX_MAPPED_FLOWS = 20
-MAX_MAPPINGS_PER_FLOW = 100
-_ATTRIBUTE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
-# A dot path into the provider's data, or session.<captured value>.
-_MAPPING_PATH_PATTERN = r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){0,15}$"
 LISTING_MESSAGE = "Integrations retrieved successfully."
 USER_LISTING_MESSAGE = "User integrations retrieved successfully."
 
@@ -223,11 +217,6 @@ class ToolConnectionDetail(BaseModel):
     can_test: bool
     operations: list[str]
     flows: list[str]
-    field_mappings: dict[str, dict[str, str]] = Field(
-        description=(
-            "Your overrides of flow outputs, as {flow: {attribute: path}}"
-        ),
-    )
     is_enabled: bool
     status: CardStatus
     last_tested_at: datetime | None
@@ -251,17 +240,6 @@ class ToolConnectionUpdate(BaseModel):
     remove_credentials: list[str] = Field(
         default_factory=list, max_length=MAX_CREDENTIALS
     )
-    field_mappings: dict[str, dict[str, str]] | None = Field(
-        default=None,
-        max_length=MAX_MAPPED_FLOWS,
-        description=(
-            "Replaces your output overrides, as {flow: {attribute: path}}. "
-            "A path is a dot path into the provider's final response "
-            "(e.g. data.full_name) or session.<captured value>. Send {} "
-            "to clear them."
-        ),
-        examples=[{"aadhaar_otp": {"holder_name": "data.full_name"}}],
-    )
 
     @model_validator(mode="after")
     def check_update(self) -> "ToolConnectionUpdate":
@@ -270,26 +248,8 @@ class ToolConnectionUpdate(BaseModel):
             self.is_enabled is None
             and not self.credentials
             and not self.remove_credentials
-            and self.field_mappings is None
         ):
-            raise ValueError("send is_enabled, credentials, or field_mappings")
-        for flow, mappings in (self.field_mappings or {}).items():
-            if not re.fullmatch(OPERATION_NAME_PATTERN, flow):
-                raise ValueError(f"flow name '{flow[:40]}' is not valid")
-            if len(mappings) > MAX_MAPPINGS_PER_FLOW:
-                raise ValueError(
-                    f"at most {MAX_MAPPINGS_PER_FLOW} mappings per flow"
-                )
-            for attribute, path in mappings.items():
-                if not re.fullmatch(_ATTRIBUTE_PATTERN, attribute):
-                    raise ValueError(
-                        f"attribute '{attribute[:40]}' must be "
-                        "lower_snake_case"
-                    )
-                if not re.fullmatch(_MAPPING_PATH_PATTERN, path):
-                    raise ValueError(
-                        f"path for '{attribute}' must be a dot path"
-                    )
+            raise ValueError("send is_enabled, credentials, or both")
         names = [*(self.credentials or {}), *self.remove_credentials]
         for name in names:
             if not re.fullmatch(CREDENTIAL_NAME_PATTERN, name):

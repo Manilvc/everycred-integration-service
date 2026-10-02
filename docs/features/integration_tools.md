@@ -1,7 +1,7 @@
 # Integration Tools
 
 > Package: `app/features/integration_tools/`
-> Last updated: 2026-09-28
+> Last updated: 2026-10-02
 
 ## Overview
 
@@ -29,6 +29,8 @@ erDiagram
 | GET | `/v1/integration-tools` | Super admin | Whole catalogue |
 | GET | `/v1/client/integration-tools` | `X-API-Key` | Tools usable for the calling client |
 | PUT | `/v1/integration-tools/{tool_code}` | Super admin | Create or replace a tool, including its `connector_config` |
+| GET | `/v1/integration-tools/{tool_code}/fields` | Super admin | Field keys the tool's provider has returned, per flow |
+| GET | `/v1/client/integration-tools/{tool_code}/fields` | `X-API-Key` | The same, for a tool serving one of the client's enabled types |
 
 ### Admin listing
 
@@ -135,6 +137,20 @@ curl -X PUT http://localhost:8000/v1/clients/<client_id>/integrations/confirm \
 
 Sending `"tool_code": null` (or omitting it) clears the choice. The
 `PUT` replaces the whole configuration, as before.
+
+## Recorded field keys
+
+`integration_tool_fields` holds the keys (never values) of providers'
+final responses, recorded when sessions complete; see
+[sessions](sessions.md#recorded-field-keys). Both `/fields` routes take
+`flow`, `limit`, and `offset`, and return a page ordered by flow, then
+key.
+
+| Column | Meaning |
+|--------|---------|
+| `integration_tool_id`, `flow`, `key` | Unique together; `key` is a dot path such as `address.zip` |
+| `value_type` | JSON type last seen: `string`, `number`, `boolean`, `object`, `array`, `null` |
+| `created_at` / `last_seen_at` | First and last time a completed session returned the key |
 
 ## Data model
 

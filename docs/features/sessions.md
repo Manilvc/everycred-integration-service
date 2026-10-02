@@ -1,7 +1,7 @@
 # Sessions (Confirm and Gather)
 
 > Package: `app/features/sessions/` (worker in `app/worker.py`)
-> Last updated: 2026-09-29
+> Last updated: 2026-10-02
 
 ## Overview
 
@@ -164,16 +164,44 @@ errors (`403`, `404`, `422`) and create nothing.
 
 A flow's `outputs` map attribute names to dot paths in the final
 step's data (`org.department`, `items.0.id`) or to captured values
-(`session.request_ref`). A client can add or override attributes per
-tool from the Integrations drawer:
+(`session.request_ref`). They are set in the tool's configuration by a
+super admin and apply to every client. Attributes whose path is absent
+from the response are left out.
+
+## Recorded field keys
+
+When a session completes (verified, not verified, or gathered), the
+keys of the provider's final response are recorded in
+`integration_tool_fields`, per tool and flow, with their JSON type;
+values are never recorded. Nested fields use dots (`address.zip`) and
+arrays are recorded as `array` without their items. A client backend
+reads them to learn which fields a provider returns:
 
 ```bash
-curl -X PUT https://<host>/integration/v1/client/integrations/acme-hrms \
-  -H "X-API-Key: <client api key>" -H "Content-Type: application/json" \
-  -d '{"field_mappings": {"employee_profile": {"employee_number": "employee_code"}}}'
+curl https://<host>/integration/v1/client/integration-tools/surepass/fields?flow=aadhaar_otp \
+  -H "X-API-Key: <client api key>"
 ```
 
-Attributes whose path is absent from the response are left out.
+```json
+{
+  "items": [
+    {"flow": "aadhaar_otp", "key": "address.zip", "value_type": "string",
+     "first_seen_at": "2026-10-02T09:00:00Z", "last_seen_at": "2026-10-02T09:30:00Z"},
+    {"flow": "aadhaar_otp", "key": "dob", "value_type": "string", "...": "..."},
+    {"flow": "aadhaar_otp", "key": "full_name", "value_type": "string", "...": "..."}
+  ],
+  "total": 3, "limit": 20, "offset": 0
+}
+```
+
+Super admins use `GET /v1/integration-tools/{tool_code}/fields`. A key
+appears after the first completed session that returned it. The keys
+are written after the session is committed, in their own transaction,
+so recording them can never fail a session.
+
+Only the flow's `outputs` are returned as values by `/result`; a
+recorded key can be added to `outputs` in the tool configuration to
+return it.
 
 ## Webhooks and polling
 

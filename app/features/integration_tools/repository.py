@@ -2,11 +2,15 @@
 
 import uuid
 from collections.abc import Collection, Sequence
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.features.integration_tools.models import IntegrationTool
+from app.features.integration_tools.models import (
+    IntegrationTool,
+    IntegrationToolField,
+)
 from app.features.integration_types.models import IntegrationType
 
 
@@ -98,3 +102,80 @@ class IntegrationToolRepository:
             .offset(offset)
         )
         return tools.all(), total or 0
+
+
+class IntegrationToolFieldRepository:
+    """Queries for :class:`IntegrationToolField` rows."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list_page(
+        self,
+        integration_tool_id: uuid.UUID,
+        *,
+        flow: str | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[Sequence[IntegrationToolField], int]:
+        """Return one page of a tool's fields, by flow then key."""
+        filters = [
+            IntegrationToolField.integration_tool_id == integration_tool_id
+        ]
+        if flow is not None:
+            filters.append(IntegrationToolField.flow == flow)
+        total = await self.session.scalar(
+            select(func.count())
+            .select_from(IntegrationToolField)
+            .where(*filters)
+        )
+        fields = await self.session.scalars(
+            select(IntegrationToolField)
+            .where(*filters)
+            .order_by(IntegrationToolField.flow, IntegrationToolField.key)
+            .limit(limit)
+            .offset(offset)
+        )
+        return fields.all(), total or 0
+
+    async def record(
+        self,
+        integration_tool_id: uuid.UUID,
+        flow: str,
+        types_by_key: dict[str, str],
+        seen_at: datetime,
+    ) -> int:
+        """Stage seen fields: new keys are added, known ones refreshed.
+
+        Returns:
+            How many keys were new.
+        """
+        if not types_by_key:
+            return 0
+        known = {
+            field.key: field
+            for field in await self.session.scalars(
+                select(IntegrationToolField).where(
+                    IntegrationToolField.integration_tool_id
+                    == integration_tool_id,
+                    IntegrationToolField.flow == flow,
+                    IntegrationToolField.key.in_(list(types_by_key)),
+                )
+            )
+        }
+        for key, value_type in types_by_key.items():
+            field = known.get(key)
+            if field is None:
+                self.session.add(
+                    IntegrationToolField(
+                        integration_tool_id=integration_tool_id,
+                        flow=flow,
+                        key=key,
+                        value_type=value_type,
+                        last_seen_at=seen_at,
+                    )
+                )
+            else:
+                field.value_type = value_type
+                field.last_seen_at = seen_at
+        return len(types_by_key) - len(known)

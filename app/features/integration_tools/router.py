@@ -19,9 +19,11 @@ from app.features.integration_tools.dependencies import (
 from app.features.integration_tools.models import TOOL_CODE_MAX_LENGTH
 from app.features.integration_tools.schemas import (
     ClientToolQuery,
+    IntegrationToolFieldResponse,
     IntegrationToolQuery,
     IntegrationToolResponse,
     IntegrationToolUpsert,
+    ToolFieldQuery,
 )
 from app.features.super_admins.dependencies import get_current_super_admin
 from app.shared.schemas import ErrorResponse, Page
@@ -104,6 +106,61 @@ async def upsert_integration_tool(
     with `PUT /v1/clients/{client_id}/tools/{tool_code}/credentials`.
     """
     return await service.upsert_tool(tool_code, definition)
+
+
+ToolCode = Annotated[str, Path(min_length=1, max_length=TOOL_CODE_MAX_LENGTH)]
+_FIELDS_DESCRIPTION = """
+Keys are recorded automatically, without values, from the provider's
+final response each time a session of the flow completes. A key appears
+here after the first completed session that returned it. Nested fields
+use dots (`address.zip`); arrays are listed as `array` without their
+items.
+"""
+
+
+@admin_router.get(
+    "/{tool_code}/fields",
+    response_model=Page[IntegrationToolFieldResponse],
+    summary="List the field keys a tool's provider returns",
+    description=_FIELDS_DESCRIPTION,
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "No tool with this code",
+        }
+    },
+)
+async def list_integration_tool_fields(
+    tool_code: ToolCode,
+    filters: ToolFieldQuery,
+    service: IntegrationToolServiceDep,
+) -> Page[IntegrationToolFieldResponse]:
+    """Return a tool's recorded field keys, by flow then key."""
+    return await service.list_tool_fields(tool_code, filters)
+
+
+@client_router.get(
+    "/{tool_code}/fields",
+    response_model=Page[IntegrationToolFieldResponse],
+    summary="List the field keys a tool's provider returns",
+    description=_FIELDS_DESCRIPTION,
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "Tool not available to this client",
+        }
+    },
+)
+async def list_client_integration_tool_fields(
+    tool_code: ToolCode,
+    filters: ToolFieldQuery,
+    current_client: CurrentClient,
+    service: IntegrationToolServiceDep,
+) -> Page[IntegrationToolFieldResponse]:
+    """Return the field keys of a tool you can use, by flow then key."""
+    return await service.list_tool_fields_for_client(
+        current_client, tool_code, filters
+    )
 
 
 @client_router.get(
