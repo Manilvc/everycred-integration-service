@@ -182,14 +182,19 @@ The body replaces that client's list. `GET` on the same path lists them.
 GET /v1/client/integration-tools/surepass/fields?flow=aadhaar_otp
 {
   "items": [
-    {"flow": "aadhaar_otp", "key": "care_of", "label": "Care of",
+    {"id": "3f6b…", "flow": "aadhaar_otp", "key": "care_of", "label": "Care of",
      "value_type": "string", "scope": "client", "created_at": "…", "updated_at": "…"},
-    {"flow": "aadhaar_otp", "key": "full_name", "label": "Full name",
+    {"id": "a91c…", "flow": "aadhaar_otp", "key": "full_name", "label": "Full name",
      "value_type": "string", "scope": "global", "created_at": "…", "updated_at": "…"}
   ],
   "total": 2, "limit": 20, "offset": 0
 }
 ```
+
+Each field has a stable `id`: saving a list again updates fields
+that stay in it (same flow and key) in place, so their ids never
+change and can be stored as references. Only new fields get new ids,
+and removed fields are deleted.
 
 Rules: keys are up to 8 segments of letters, digits, `_` or `-` joined
 by dots; a flow and key may appear once per list (`422` otherwise); at

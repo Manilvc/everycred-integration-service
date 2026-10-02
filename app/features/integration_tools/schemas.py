@@ -126,11 +126,15 @@ class IntegrationToolFieldResponse(BaseModel):
     """A field key of a tool; only keys are stored, never values.
 
     Attributes:
+        id: The field's id. Stable while the field stays in its list
+            (saving the list again keeps it), so it can be stored as a
+            reference.
         key: Dot path of the field in the provider's response data,
             e.g. ``full_name`` or ``address.zip``.
         scope: ``global`` for every client, ``client`` for one client.
     """
 
+    id: uuid.UUID
     flow: str
     key: str
     label: str | None
