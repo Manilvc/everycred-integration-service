@@ -42,7 +42,12 @@ class IntegrationTypeRepository:
         return integration_types.all()
 
     async def list_page(
-        self, *, include_inactive: bool, limit: int, offset: int
+        self,
+        *,
+        include_inactive: bool,
+        limit: int,
+        offset: int,
+        direction: str | None = None,
     ) -> tuple[Sequence[IntegrationType], int]:
         """Return one page of integration types and the total count.
 
@@ -54,12 +59,16 @@ class IntegrationTypeRepository:
             include_inactive: Also return types with ``is_active`` off.
             limit: Maximum number of rows to return.
             offset: Number of rows to skip.
+            direction: Keep only types with this direction; ``None``
+                keeps both.
 
         Returns:
             The rows on this page and the number of matching rows
             across all pages.
         """
         filters = [] if include_inactive else [IntegrationType.is_active]
+        if direction is not None:
+            filters.append(IntegrationType.direction == direction)
 
         total_statement = (
             select(func.count()).select_from(IntegrationType).where(*filters)

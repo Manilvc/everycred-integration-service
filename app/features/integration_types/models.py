@@ -1,5 +1,7 @@
 """ORM model for integration types."""
 
+from enum import StrEnum
+
 from sqlalchemy import Boolean, Integer, String, Text, true
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -8,6 +10,19 @@ from app.core.models import TimestampMixin, UUIDPrimaryKeyMixin
 
 CODE_MAX_LENGTH = 50
 NAME_MAX_LENGTH = 100
+
+
+class IntegrationDirection(StrEnum):
+    """Which way data moves between EveryCRED and the integration.
+
+    ``inbound``: data comes into EveryCRED, e.g. identity checks
+    (Confirm), systems of record (Gather), holder input (Declare).
+    ``outbound``: EveryCRED acts on or reports to other systems, e.g.
+    physical access (Enforcement) and audit (Records).
+    """
+
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
 
 
 class IntegrationType(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -23,6 +38,8 @@ class IntegrationType(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         description: Optional longer explanation of the type.
         is_active: Inactive types are hidden from the default listing.
         display_order: Lower numbers are listed first.
+        direction: ``inbound`` or ``outbound``; see
+            :class:`IntegrationDirection`.
     """
 
     __tablename__ = "integration_types"
@@ -37,4 +54,12 @@ class IntegrationType(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     display_order: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
+    )
+    # The server default keeps rows inserted directly in SQL valid;
+    # set it to outbound for outbound types.
+    direction: Mapped[str] = mapped_column(
+        String(20),
+        default=IntegrationDirection.INBOUND,
+        server_default=IntegrationDirection.INBOUND.value,
+        nullable=False,
     )

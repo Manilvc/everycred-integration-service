@@ -42,6 +42,9 @@ async def list_integration_types(
 ) -> Page[IntegrationTypeResponse]:
     """Return integration types, ordered for display.
 
-    Only active types are returned unless ``include_inactive=true``.
+    `direction` filters by `inbound` (Confirm, Gather, Declare) or
+    `outbound` (Enforcement, Records); without it, or with `all`, both
+    are returned. Only active types are returned unless
+    ``include_inactive=true``.
     """
     return await service.list_integration_types(filters)
