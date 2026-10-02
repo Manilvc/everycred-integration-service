@@ -26,6 +26,9 @@ from app.features.integration_tools.router import (
     admin_router as integration_tools_router,
 )
 from app.features.integration_tools.router import (
+    client_fields_router as client_tool_fields_router,
+)
+from app.features.integration_tools.router import (
     client_router as client_integration_tools_router,
 )
 from app.features.integration_types.router import (
@@ -53,6 +56,7 @@ api_v1_router.include_router(super_admins_router)
 api_v1_router.include_router(integration_types_router)
 api_v1_router.include_router(integration_tools_router)
 api_v1_router.include_router(clients_router)
+api_v1_router.include_router(client_tool_fields_router)
 api_v1_router.include_router(client_self_service_router)
 api_v1_router.include_router(client_integration_tools_router)
 api_v1_router.include_router(client_integrations_router)

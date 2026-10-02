@@ -6,7 +6,10 @@ from fastapi import Depends
 
 from app.connectors.dependencies import ConnectorRegistryDep
 from app.core.database import DbSession
-from app.features.clients.repository import ClientIntegrationConfigRepository
+from app.features.clients.repository import (
+    ClientIntegrationConfigRepository,
+    ClientRepository,
+)
 from app.features.integration_tools.repository import (
     IntegrationToolFieldRepository,
     IntegrationToolRepository,
@@ -27,6 +30,7 @@ def get_integration_tool_service(
         tool_fields=IntegrationToolFieldRepository(session),
         integration_types=IntegrationTypeRepository(session),
         client_configs=ClientIntegrationConfigRepository(session),
+        clients=ClientRepository(session),
         registry=registry,
     )
 

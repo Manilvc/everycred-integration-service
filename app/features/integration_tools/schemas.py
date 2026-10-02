@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated
 
 from fastapi import Query
@@ -12,8 +13,11 @@ from app.connectors.http.config import (
     HttpConnectorConfig,
 )
 from app.features.integration_tools.models import (
+    FIELD_KEY_MAX_LENGTH,
+    FIELD_LABEL_MAX_LENGTH,
     PROVIDER_MAX_LENGTH,
     TOOL_NAME_MAX_LENGTH,
+    FieldValueType,
 )
 from app.features.integration_types.models import CODE_MAX_LENGTH
 from app.shared.pagination import PaginationParams
@@ -35,14 +39,82 @@ class IntegrationToolFilters(ClientToolFilters):
     include_inactive: bool = False
 
 
+MAX_TOOL_FIELDS = 300
+# Up to 8 segments of letters, digits, "_" or "-", joined by dots.
+FIELD_KEY_PATTERN = r"^[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9_-]{1,64}){0,7}$"
+
+
+class FieldScope(StrEnum):
+    """Whether a field applies to every client or to one."""
+
+    GLOBAL = "global"
+    CLIENT = "client"
+
+
 class ToolFieldFilters(PaginationParams):
-    """Query parameters for a tool's recorded field keys."""
+    """Query parameters for a tool's field keys."""
 
     flow: str | None = Field(
         default=None,
         pattern=OPERATION_NAME_PATTERN,
-        description="Only fields returned by this flow.",
+        description="Only fields of this flow.",
     )
+
+
+class ToolFieldInput(BaseModel):
+    """One field key a flow's provider response holds.
+
+    Attributes:
+        flow: Flow whose response holds the field, e.g. ``aadhaar_otp``.
+        key: Dot path in the provider's response data, e.g.
+            ``full_name`` or ``address.zip``.
+        label: Human-readable name for screens, e.g. "Date of birth".
+        value_type: JSON type of the value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    flow: str = Field(pattern=OPERATION_NAME_PATTERN, examples=["aadhaar_otp"])
+    key: str = Field(
+        max_length=FIELD_KEY_MAX_LENGTH,
+        pattern=FIELD_KEY_PATTERN,
+        examples=["address.zip"],
+    )
+    label: str | None = Field(
+        default=None, max_length=FIELD_LABEL_MAX_LENGTH, examples=["PIN code"]
+    )
+    value_type: FieldValueType = FieldValueType.STRING
+
+
+def _check_unique_fields(fields: list[ToolFieldInput]) -> list[ToolFieldInput]:
+    seen: set[tuple[str, str]] = set()
+    for field in fields:
+        if (field.flow, field.key) in seen:
+            raise ValueError(
+                f"field '{field.key}' is listed twice for flow '{field.flow}'"
+            )
+        seen.add((field.flow, field.key))
+    return fields
+
+
+class ToolFieldsUpdate(BaseModel):
+    """The complete list of a client's own fields for one tool.
+
+    Replaces the client's earlier list; send ``[]`` to remove them all.
+    Global fields are set with the tool definition instead.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fields: list[ToolFieldInput] = Field(max_length=MAX_TOOL_FIELDS)
+
+    @field_validator("fields")
+    @classmethod
+    def check_unique(
+        cls, fields: list[ToolFieldInput]
+    ) -> list[ToolFieldInput]:
+        """Reject a flow and key listed twice."""
+        return _check_unique_fields(fields)
 
 
 IntegrationToolQuery = Annotated[IntegrationToolFilters, Query()]
@@ -51,22 +123,21 @@ ToolFieldQuery = Annotated[ToolFieldFilters, Query()]
 
 
 class IntegrationToolFieldResponse(BaseModel):
-    """A field key a provider has returned; the value is never stored.
+    """A field key of a tool; only keys are stored, never values.
 
     Attributes:
         key: Dot path of the field in the provider's response data,
             e.g. ``full_name`` or ``address.zip``.
-        value_type: JSON type last seen: ``string``, ``number``,
-            ``boolean``, ``object``, ``array``, or ``null``.
-        first_seen_at: When a completed session first returned it.
-        last_seen_at: When a completed session last returned it.
+        scope: ``global`` for every client, ``client`` for one client.
     """
 
     flow: str
     key: str
-    value_type: str
-    first_seen_at: datetime
-    last_seen_at: datetime
+    label: str | None
+    value_type: FieldValueType
+    scope: FieldScope
+    created_at: datetime
+    updated_at: datetime
 
 
 class IntegrationTypeSummary(BaseModel):
@@ -192,6 +263,23 @@ class IntegrationToolUpsert(BaseModel):
             "secrets; use {credentials.<name>} placeholders instead."
         ),
     )
+    fields: list[ToolFieldInput] | None = Field(
+        default=None,
+        max_length=MAX_TOOL_FIELDS,
+        description=(
+            "Global field keys the provider returns, for every client. "
+            "Replaces the tool's earlier global list; leave out to keep "
+            "it unchanged, send [] to remove it."
+        ),
+    )
+
+    @field_validator("fields")
+    @classmethod
+    def check_unique_fields(
+        cls, fields: list[ToolFieldInput] | None
+    ) -> list[ToolFieldInput] | None:
+        """Reject a flow and key listed twice."""
+        return None if fields is None else _check_unique_fields(fields)
 
     @field_validator("integration_types")
     @classmethod
