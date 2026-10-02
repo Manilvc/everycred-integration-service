@@ -6,7 +6,7 @@
 ## Overview
 
 Liveness and readiness probes for load balancers and Kubernetes. They
-are mounted at the root, outside `/api/v1`, and need no authentication.
+are mounted at the root, outside `/v1`, and need no authentication.
 
 ## Endpoints
 

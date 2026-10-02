@@ -29,14 +29,14 @@ flowchart LR
 
 | Method | Path | Screen element |
 |--------|------|----------------|
-| GET | `/api/v1/client/integrations` | The page: groups and their systems |
-| GET | `/api/v1/client/integrations/{tool_code}` | The drawer |
-| PUT | `/api/v1/client/integrations/{tool_code}` | **Save**: switch and credentials |
-| POST | `/api/v1/client/integrations/{tool_code}/test` | **Test connection** |
+| GET | `/v1/client/integrations` | The page: groups and their systems |
+| GET | `/v1/client/integrations/{tool_code}` | The drawer |
+| PUT | `/v1/client/integrations/{tool_code}` | **Save**: switch and credentials |
+| POST | `/v1/client/integrations/{tool_code}/test` | **Test connection** |
 
 The same listing for one of the client's users, with the user's
 connection status, is
-[`GET /api/v1/client/users/{user_uuid}/integrations`](user_connections.md#a-users-integrations-with-connection-status).
+[`GET /v1/client/users/{user_uuid}/integrations`](user_connections.md#a-users-integrations-with-connection-status).
 
 ### List
 

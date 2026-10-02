@@ -15,7 +15,7 @@ from app.features.integration_tools.models import IntegrationTool
 from app.features.integration_types.models import IntegrationType
 from tests.features.clients.conftest import create_client, issue_api_key
 
-LIST_URL = "/api/v1/client/integrations"
+LIST_URL = "/v1/client/integrations"
 SECRET = "entra-client-secret-value"
 
 ENTRA_CONFIG = {
@@ -135,7 +135,7 @@ async def setup(
 
     portal = await create_client(client, super_admin_headers)
     response = await client.put(
-        f"/api/v1/clients/{portal['id']}/integrations/confirm",
+        f"/v1/clients/{portal['id']}/integrations/confirm",
         json={"tool_code": "idme"},
         headers=super_admin_headers,
     )
@@ -419,7 +419,7 @@ async def test_disabling_a_tool_blocks_user_operations(
 ) -> None:
     await save(client, setup, "idme", credentials={"api_key": "k"})
     user_base = (
-        "/api/v1/client/users/55555555-5555-4555-8555-555555555555/"
+        "/v1/client/users/55555555-5555-4555-8555-555555555555/"
         "connections/confirm"
     )
     await client.put(user_base, json={"kwargs": {}}, headers=setup["key"])
@@ -487,7 +487,7 @@ OTHER_USER = "66666666-6666-4666-8666-666666666666"
 
 
 def user_url(user: str = USER) -> str:
-    return f"/api/v1/client/users/{user}/integrations"
+    return f"/v1/client/users/{user}/integrations"
 
 
 ALL_USER_STATUSES = [
@@ -522,7 +522,7 @@ async def connect_user_to_idme(client: AsyncClient, setup: dict) -> None:
     assert saved.status_code == 200, saved.text
     # Saving a user's connection connects it.
     params = await client.put(
-        f"/api/v1/client/users/{USER}/connections/confirm",
+        f"/v1/client/users/{USER}/connections/confirm",
         json={"kwargs": {"id": "doc-1"}},
         headers=setup["key"],
     )
@@ -563,19 +563,19 @@ async def test_built_in_tool_is_listed_once_the_user_connects(
     client: AsyncClient, setup: dict, super_admin_headers: dict[str, str]
 ) -> None:
     enabled = await client.put(
-        f"/api/v1/clients/{setup['client_id']}/integrations/declare",
+        f"/v1/clients/{setup['client_id']}/integrations/declare",
         json={"tool_code": "holder-wallet-app"},
         headers=super_admin_headers,
     )
     assert enabled.status_code == 200, enabled.text
     before = await client.get(user_url(), headers=setup["key"])
     await client.put(
-        f"/api/v1/client/users/{USER}/connections/declare",
+        f"/v1/client/users/{USER}/connections/declare",
         json={},
         headers=setup["key"],
     )
     connected = await client.post(
-        f"/api/v1/client/users/{USER}/connections/declare/connect",
+        f"/v1/client/users/{USER}/connections/declare/connect",
         headers=setup["key"],
     )
     after = await client.get(user_url(), headers=setup["key"])
@@ -593,7 +593,7 @@ async def test_user_status_follows_the_connection(
     await save(client, setup, "idme", credentials={"api_key": "k"})
     before = (await user_systems(client, setup))["confirm"]["idme"]
     await client.put(
-        f"/api/v1/client/users/{USER}/connections/confirm",
+        f"/v1/client/users/{USER}/connections/confirm",
         json={"kwargs": {"id": "doc-1"}},
         headers=setup["key"],
     )
@@ -632,7 +632,7 @@ async def test_users_and_clients_are_kept_apart(
         client, super_admin_headers, code="other-portal"
     )
     await client.put(
-        f"/api/v1/clients/{other_portal['id']}/integrations/confirm",
+        f"/v1/clients/{other_portal['id']}/integrations/confirm",
         json={"tool_code": "idme"},
         headers=super_admin_headers,
     )
@@ -704,7 +704,7 @@ async def test_saving_without_client_credentials_is_saved_as_failed(
     # The client has not stored ID.me's api_key, so connecting cannot
     # work; the user's inputs are still saved.
     response = await client.put(
-        f"/api/v1/client/users/{USER}/connections/confirm",
+        f"/v1/client/users/{USER}/connections/confirm",
         json={"kwargs": {"id": "doc-1"}},
         headers=setup["key"],
     )

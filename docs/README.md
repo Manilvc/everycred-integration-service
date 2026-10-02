@@ -10,7 +10,7 @@ app/
 ├── main.py              # create_app(), lifespan, middleware and router wiring
 ├── worker.py            # Background worker: webhooks, expiry, data purge
 ├── api/
-│   └── router.py        # api_v1_router: mounts feature routers under /api/v1
+│   └── router.py        # api_v1_router: mounts feature routers under /v1
 ├── core/                # Infrastructure every feature relies on
 │   ├── config.py        # Settings, get_settings()
 │   ├── context.py       # Request-scoped context variables (request id)

@@ -19,7 +19,7 @@ from app.features.super_admins.service import SuperAdminService
 # FastAPI's default 403 body when the header is missing.
 bearer_scheme = HTTPBearer(
     auto_error=False,
-    description="Access token from POST /api/v1/super-admins/login.",
+    description="Access token from POST /v1/super-admins/login.",
 )
 BearerCredentials = Annotated[
     HTTPAuthorizationCredentials | None, Depends(bearer_scheme)

@@ -17,9 +17,9 @@ The API is for super admins only.
 
 | Method | Path                       | Summary                 | Auth              |
 |--------|----------------------------|-------------------------|-------------------|
-| GET    | `/api/v1/integration-types` | List integration types | Super admin token |
+| GET    | `/v1/integration-types` | List integration types | Super admin token |
 
-### `GET /api/v1/integration-types`
+### `GET /v1/integration-types`
 
 Query parameters:
 
@@ -32,7 +32,7 @@ Query parameters:
 Unknown parameters are rejected with `422`.
 
 ```bash
-curl http://localhost:8000/api/v1/integration-types \
+curl http://localhost:8000/v1/integration-types \
   -H "Authorization: Bearer <super admin access token>"
 ```
 

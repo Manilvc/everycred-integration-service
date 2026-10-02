@@ -90,12 +90,12 @@ async def super_admin_headers(client: AsyncClient) -> dict[str, str]:
         "password": "fixture admin passphrase",
     }
     await client.post(
-        "/api/v1/super-admins/register",
+        "/v1/super-admins/register",
         json={**credentials, "full_name": "Fixture Admin"},
         headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
     )
     login_response = await client.post(
-        "/api/v1/super-admins/login", json=credentials
+        "/v1/super-admins/login", json=credentials
     )
     access_token = login_response.json()["access_token"]
     return {"Authorization": f"Bearer {access_token}"}

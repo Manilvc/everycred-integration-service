@@ -13,9 +13,9 @@ its API key and receives its own configuration.
 
 ```mermaid
 flowchart LR
-    SA[Super admin] -- bearer token --> A[/api/v1/clients/*/]
+    SA[Super admin] -- bearer token --> A[/v1/clients/*/]
     A --> DB[(clients, client_api_keys,<br/>client_integration_configs)]
-    C[Client project] -- X-API-Key --> B[/api/v1/client/configuration/]
+    C[Client project] -- X-API-Key --> B[/v1/client/configuration/]
     B --> DB
 ```
 
@@ -25,32 +25,32 @@ flowchart LR
 
 | Method | Path | Summary |
 |--------|------|---------|
-| POST   | `/api/v1/clients` | Register a client |
-| GET    | `/api/v1/clients` | List clients (paginated, `include_inactive`) |
-| GET    | `/api/v1/clients/{client_id}` | Get a client |
-| POST   | `/api/v1/clients/{client_id}/api-keys` | Generate an API key |
-| GET    | `/api/v1/clients/{client_id}/api-keys` | List keys (metadata only) |
-| POST   | `/api/v1/clients/{client_id}/api-keys/{api_key_id}/revoke` | Revoke a key |
-| GET    | `/api/v1/clients/{client_id}/integrations` | List the client's integration settings |
-| PUT    | `/api/v1/clients/{client_id}/tools/{tool_code}/credentials` | Store the client's credentials for a tool (secret store) |
-| GET    | `/api/v1/clients/{client_id}/tools/{tool_code}/credentials` | Stored credential names, never values |
-| DELETE | `/api/v1/clients/{client_id}/tools/{tool_code}/credentials` | Remove them |
-| PUT    | `/api/v1/clients/{client_id}/integrations/{integration_type_code}` | Enable a type, choose its tool, set settings |
+| POST   | `/v1/clients` | Register a client |
+| GET    | `/v1/clients` | List clients (paginated, `include_inactive`) |
+| GET    | `/v1/clients/{client_id}` | Get a client |
+| POST   | `/v1/clients/{client_id}/api-keys` | Generate an API key |
+| GET    | `/v1/clients/{client_id}/api-keys` | List keys (metadata only) |
+| POST   | `/v1/clients/{client_id}/api-keys/{api_key_id}/revoke` | Revoke a key |
+| GET    | `/v1/clients/{client_id}/integrations` | List the client's integration settings |
+| PUT    | `/v1/clients/{client_id}/tools/{tool_code}/credentials` | Store the client's credentials for a tool (secret store) |
+| GET    | `/v1/clients/{client_id}/tools/{tool_code}/credentials` | Stored credential names, never values |
+| DELETE | `/v1/clients/{client_id}/tools/{tool_code}/credentials` | Remove them |
+| PUT    | `/v1/clients/{client_id}/integrations/{integration_type_code}` | Enable a type, choose its tool, set settings |
 
 ### Client (API key)
 
 | Method | Path | Summary |
 |--------|------|---------|
-| GET    | `/api/v1/client/configuration` | The calling client's configuration |
-| PUT    | `/api/v1/client/integrations/{integration_type_code}/settings` | Replace the client's own settings for an enabled type |
-| GET    | `/api/v1/client/integration-tools` | Tools usable for the client (see [integration tools](integration_tools.md)) |
+| GET    | `/v1/client/configuration` | The calling client's configuration |
+| PUT    | `/v1/client/integrations/{integration_type_code}/settings` | Replace the client's own settings for an enabled type |
+| GET    | `/v1/client/integration-tools` | Tools usable for the client (see [integration tools](integration_tools.md)) |
 
 ## Walkthrough
 
 ### 1. Register a client
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/clients \
+curl -X POST http://localhost:8000/v1/clients \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   -d '{"code": "issuer-portal", "name": "Issuer Portal"}'
@@ -62,7 +62,7 @@ curl -X POST http://localhost:8000/api/v1/clients \
 ### 2. Generate an API key
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/clients/<client_id>/api-keys \
+curl -X POST http://localhost:8000/v1/clients/<client_id>/api-keys \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   -d '{"name": "production", "expires_at": "2027-09-28T00:00:00Z"}'
@@ -95,7 +95,7 @@ the client uses for the type; its connector runs when the client's
 users connect.
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/clients/<client_id>/integrations/confirm \
+curl -X PUT http://localhost:8000/v1/clients/<client_id>/integrations/confirm \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   -d '{"is_enabled": true, "settings": {"callback_url": "https://portal.example.com/hook"}}'
@@ -107,7 +107,7 @@ integration type must exist (see [integration types](integration_types.md)).
 ### 4. Client reads its configuration
 
 ```bash
-curl http://localhost:8000/api/v1/client/configuration \
+curl http://localhost:8000/v1/client/configuration \
   -H "X-API-Key: eci_3f9a1c07b2de_<secret>"
 ```
 
@@ -136,7 +136,7 @@ ordered like the integration type catalogue.
 ### 5. Client updates its own settings
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/client/integrations/confirm/settings \
+curl -X PUT http://localhost:8000/v1/client/integrations/confirm/settings \
   -H "X-API-Key: eci_3f9a1c07b2de_<secret>" \
   -H "Content-Type: application/json" \
   -d '{"settings": {"callback_url": "https://portal.example.com/hook"}}'
@@ -151,7 +151,7 @@ curl -X PUT http://localhost:8000/api/v1/client/integrations/confirm/settings \
 ### 6. Store the client's tool credentials
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/clients/<client_id>/tools/surepass/credentials \
+curl -X PUT http://localhost:8000/v1/clients/<client_id>/tools/surepass/credentials \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   -d '{"credentials": {"api_token": "<provider token>"}}'

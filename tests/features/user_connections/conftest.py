@@ -116,7 +116,7 @@ async def enable_integrations(
 ) -> None:
     for code in codes:
         response = await client.put(
-            f"/api/v1/clients/{client_id}/integrations/{code}",
+            f"/v1/clients/{client_id}/integrations/{code}",
             json={
                 "tool_code": TOOL_BY_TYPE.get(code),
                 "settings": settings or {},
@@ -146,5 +146,5 @@ async def client_headers(
 
 
 def connection_url(code: str | None = None, user_uuid: str = USER_UUID) -> str:
-    base = f"/api/v1/client/users/{user_uuid}/connections"
+    base = f"/v1/client/users/{user_uuid}/connections"
     return f"{base}/{code}" if code else base

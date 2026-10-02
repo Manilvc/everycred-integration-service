@@ -21,7 +21,7 @@ from app.features.webhooks.repository import (
 from app.features.webhooks.service import WebhookService, retry_delay
 from tests.features.clients.conftest import create_client, issue_api_key
 
-WEBHOOK_URL = "/api/v1/client/webhook"
+WEBHOOK_URL = "/v1/client/webhook"
 PUBLIC_ADDRESS = "93.184.216.34"
 
 

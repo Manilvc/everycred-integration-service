@@ -1,6 +1,6 @@
 """Liveness and readiness probes for the orchestrator.
 
-These routes are mounted at the root, outside ``/api/v1``, because
+These routes are mounted at the root, outside ``/v1``, because
 load balancers and Kubernetes probes should not depend on API
 versioning.
 """
