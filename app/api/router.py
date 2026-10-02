@@ -32,6 +32,9 @@ from app.features.integration_tools.router import (
     client_router as client_integration_tools_router,
 )
 from app.features.integration_types.router import (
+    client_router as client_integration_types_router,
+)
+from app.features.integration_types.router import (
     router as integration_types_router,
 )
 from app.features.sessions.router import router as sessions_router
@@ -54,6 +57,7 @@ api_v1_router = APIRouter(
 
 api_v1_router.include_router(super_admins_router)
 api_v1_router.include_router(integration_types_router)
+api_v1_router.include_router(client_integration_types_router)
 api_v1_router.include_router(integration_tools_router)
 api_v1_router.include_router(clients_router)
 api_v1_router.include_router(client_tool_fields_router)
