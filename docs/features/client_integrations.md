@@ -1,7 +1,7 @@
 # Client Integrations (the Integrations screen)
 
 > Package: `app/features/client_integrations/`
-> Last updated: 2026-10-01
+> Last updated: 2026-10-02
 
 ## Overview
 
@@ -217,6 +217,9 @@ setups made through the super admin API keep working.
 ## Not included
 
 - **Field mappings** and **sync schedules** from the prototype drawer.
+  Per-client field mappings existed briefly and were removed (migration
+  `82996fd0ddf2`); the keys a provider returns are recorded instead
+  (see [sessions](sessions.md#recorded-field-keys)).
 - **Deployment** (on-premises vs cloud) is not modelled.
 - The type codes stay `enforcement` and `records`; EveryCRED's own
   screen uses `enforce` and `record` for those groups.

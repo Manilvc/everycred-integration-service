@@ -57,20 +57,18 @@ def build_session_service(
     settings: Settings,
 ) -> SessionService:
     """Assemble a session service; shared by the API and the worker."""
-    tool_connections = ClientToolConnectionRepository(session)
     return SessionService(
         session=session,
         sessions=SessionRepository(session),
         targets=IntegrationTargetResolver(
             integration_types=IntegrationTypeRepository(session),
             client_configs=ClientIntegrationConfigRepository(session),
-            tool_connections=tool_connections,
+            tool_connections=ClientToolConnectionRepository(session),
             credentials=ClientToolCredentialRepository(session),
             secret_store=secret_store,
             registry=registry,
             http_client=http_client,
         ),
-        tool_connections=tool_connections,
         secret_store=secret_store,
         webhooks=build_webhook_service(
             session, secret_store, http_client, settings

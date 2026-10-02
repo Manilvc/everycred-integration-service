@@ -194,55 +194,6 @@ async def test_gather_flow_returns_mapped_attributes(
     }
 
 
-async def test_client_field_mappings_override_outputs(
-    client: AsyncClient, setup: dict[str, Any]
-) -> None:
-    saved = await client.put(
-        "/v1/client/integrations/acme-identity",
-        json={
-            "field_mappings": {
-                "employee_profile": {
-                    "employee_number": "employee_code",
-                    "email": "work_email",
-                }
-            }
-        },
-        headers=setup["key"],
-    )
-    assert saved.status_code == 200, saved.text
-    assert saved.json()["flows"] == ["aadhaar_otp", "employee_profile"]
-
-    started = await start(
-        client,
-        setup,
-        flow="employee_profile",
-        integration_type="gather",
-        employee_id="E-1001",
-    )
-    result = await client.get(
-        session_url(started.json()["id"], "result"), headers=setup["key"]
-    )
-
-    assert result.json()["attributes"] == {
-        "email": "asha@example.com",
-        "department": "Finance",
-        "employee_number": "E-1001",
-    }
-
-
-async def test_field_mappings_for_unknown_flow_are_rejected(
-    client: AsyncClient, setup: dict[str, Any]
-) -> None:
-    response = await client.put(
-        "/v1/client/integrations/acme-identity",
-        json={"field_mappings": {"no_such_flow": {"a": "b"}}},
-        headers=setup["key"],
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "unknown_flows"
-
-
 async def test_provider_failure_fails_the_session(
     client: AsyncClient, setup: dict[str, Any], provider: FakeProvider
 ) -> None:

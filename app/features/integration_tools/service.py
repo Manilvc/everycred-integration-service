@@ -16,10 +16,15 @@ from app.connectors.resolution import (
 from app.features.clients.models import Client
 from app.features.clients.repository import ClientIntegrationConfigRepository
 from app.features.integration_tools.exceptions import (
+    IntegrationToolNotFoundError,
     UnknownIntegrationTypesError,
 )
-from app.features.integration_tools.models import IntegrationTool
+from app.features.integration_tools.models import (
+    IntegrationTool,
+    IntegrationToolField,
+)
 from app.features.integration_tools.repository import (
+    IntegrationToolFieldRepository,
     IntegrationToolRepository,
 )
 from app.features.integration_tools.schemas import (
@@ -27,11 +32,13 @@ from app.features.integration_tools.schemas import (
     ConnectorInfo,
     ConnectorParameterResponse,
     FlowDescriptionResponse,
+    IntegrationToolFieldResponse,
     IntegrationToolFilters,
     IntegrationToolResponse,
     IntegrationToolUpsert,
     IntegrationTypeSummary,
     OperationDescriptionResponse,
+    ToolFieldFilters,
 )
 from app.features.integration_types.repository import (
     IntegrationTypeRepository,
@@ -47,6 +54,7 @@ class IntegrationToolService:
     Attributes:
         session: Unit of work for the request; committed on upsert.
         tools: Persistence for integration tools.
+        tool_fields: Field keys recorded from providers' responses.
         integration_types: Looks up the types a tool serves.
         client_configs: Tells which types a client has enabled.
         registry: Connector code, used to describe each tool's
@@ -57,12 +65,14 @@ class IntegrationToolService:
         self,
         session: AsyncSession,
         tools: IntegrationToolRepository,
+        tool_fields: IntegrationToolFieldRepository,
         integration_types: IntegrationTypeRepository,
         client_configs: ClientIntegrationConfigRepository,
         registry: ConnectorRegistry,
     ) -> None:
         self.session = session
         self.tools = tools
+        self.tool_fields = tool_fields
         self.integration_types = integration_types
         self.client_configs = client_configs
         self.registry = registry
@@ -151,6 +161,72 @@ class IntegrationToolService:
             total=total,
             limit=filters.limit,
             offset=filters.offset,
+        )
+
+    async def list_tool_fields(
+        self, tool_code: str, filters: ToolFieldFilters
+    ) -> Page[IntegrationToolFieldResponse]:
+        """Return the field keys a tool's provider has returned.
+
+        Raises:
+            IntegrationToolNotFoundError: No tool has this code.
+        """
+        tool = await self.tools.get_by_code(tool_code)
+        if tool is None:
+            raise IntegrationToolNotFoundError(tool_code)
+        return await self._fields_page(tool, filters)
+
+    async def list_tool_fields_for_client(
+        self, client: Client, tool_code: str, filters: ToolFieldFilters
+    ) -> Page[IntegrationToolFieldResponse]:
+        """Return a tool's field keys, if the client can use the tool.
+
+        Raises:
+            IntegrationToolNotFoundError: The tool does not exist, is
+                inactive, or serves none of the client's enabled types.
+                All three look the same, so the catalogue is not exposed.
+        """
+        tool = await self.tools.get_by_code(tool_code)
+        enabled_rows = await self.client_configs.list_with_types(
+            client.id, usable_only=True
+        )
+        if (
+            tool is None
+            or not tool.is_active
+            or not any(
+                tool.serves(integration_type.id)
+                for _, integration_type in enabled_rows
+            )
+        ):
+            raise IntegrationToolNotFoundError(tool_code)
+        return await self._fields_page(tool, filters)
+
+    async def _fields_page(
+        self, tool: IntegrationTool, filters: ToolFieldFilters
+    ) -> Page[IntegrationToolFieldResponse]:
+        fields, total = await self.tool_fields.list_page(
+            tool.id,
+            flow=filters.flow,
+            limit=filters.limit,
+            offset=filters.offset,
+        )
+        return Page[IntegrationToolFieldResponse](
+            items=[self._to_field_response(field) for field in fields],
+            total=total,
+            limit=filters.limit,
+            offset=filters.offset,
+        )
+
+    @staticmethod
+    def _to_field_response(
+        field: IntegrationToolField,
+    ) -> IntegrationToolFieldResponse:
+        return IntegrationToolFieldResponse(
+            flow=field.flow,
+            key=field.key,
+            value_type=field.value_type,
+            first_seen_at=field.created_at,
+            last_seen_at=field.last_seen_at,
         )
 
     def _to_response(

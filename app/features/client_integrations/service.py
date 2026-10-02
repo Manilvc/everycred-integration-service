@@ -14,7 +14,6 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 import httpx
-from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.base import (
@@ -30,7 +29,6 @@ from app.connectors.http.config import FlowConfig
 from app.connectors.registry import ConnectorRegistry
 from app.connectors.resolution import connector_kind, resolve_connector
 from app.core.config import Settings
-from app.core.exceptions import AppError
 from app.core.models import utc_now
 from app.core.secret_store import SecretStore, SecretStoreError
 from app.features.client_integrations.models import (
@@ -91,18 +89,6 @@ _STATUS_TO_CARD = {
     ToolConnectionStatus.CONNECTED: CardStatus.CONNECTED,
     ToolConnectionStatus.FAILED: CardStatus.FAILED,
 }
-
-
-class UnknownFlowsError(AppError):
-    """Raised when field mappings name flows the tool does not offer."""
-
-    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
-    error_code = "unknown_flows"
-
-    def __init__(self, tool_code: str, flows: list[str]) -> None:
-        super().__init__(
-            f"Tool '{tool_code}' has no flows named: " + ", ".join(flows)
-        )
 
 
 # Statuses shown as connected (green dot) on the Integrations screen.
@@ -386,13 +372,6 @@ class ClientIntegrationService:
             self.connections.add(connection)
         if update.is_enabled is not None:
             connection.is_enabled = update.is_enabled
-        if update.field_mappings is not None:
-            unknown = sorted(
-                set(update.field_mappings) - set(self._flows_of(tool))
-            )
-            if unknown:
-                raise UnknownFlowsError(tool.code, unknown)
-            connection.field_mappings = update.field_mappings
 
         credentials_changed = bool(
             update.credentials or update.remove_credentials
@@ -794,11 +773,6 @@ class ClientIntegrationService:
             missing_credentials=state.missing_credentials,
             can_test=bool(state.requirements and state.requirements.can_test),
             flows=list(self._flows_of(tool)),
-            field_mappings=(
-                dict(state.connection.field_mappings or {})
-                if state.connection
-                else {}
-            ),
             operations=[
                 operation.name
                 for operation in (

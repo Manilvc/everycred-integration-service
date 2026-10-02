@@ -8,6 +8,7 @@ from app.connectors.dependencies import ConnectorRegistryDep
 from app.core.database import DbSession
 from app.features.clients.repository import ClientIntegrationConfigRepository
 from app.features.integration_tools.repository import (
+    IntegrationToolFieldRepository,
     IntegrationToolRepository,
 )
 from app.features.integration_tools.service import IntegrationToolService
@@ -23,6 +24,7 @@ def get_integration_tool_service(
     return IntegrationToolService(
         session=session,
         tools=IntegrationToolRepository(session),
+        tool_fields=IntegrationToolFieldRepository(session),
         integration_types=IntegrationTypeRepository(session),
         client_configs=ClientIntegrationConfigRepository(session),
         registry=registry,
