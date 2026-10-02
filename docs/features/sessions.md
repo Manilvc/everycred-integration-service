@@ -168,40 +168,16 @@ step's data (`org.department`, `items.0.id`) or to captured values
 super admin and apply to every client. Attributes whose path is absent
 from the response are left out.
 
-## Recorded field keys
+## Field keys
 
-When a session completes (verified, not verified, or gathered), the
-keys of the provider's final response are recorded in
-`integration_tool_fields`, per tool and flow, with their JSON type;
-values are never recorded. Nested fields use dots (`address.zip`) and
-arrays are recorded as `array` without their items. A client backend
-reads them to learn which fields a provider returns:
+The field keys a flow's provider response holds (`full_name`, `dob`,
+`address.zip`...) are entered by a super admin in
+`integration_tool_fields`, globally or for one client, so client
+backends can name them consistently; see
+[integration tools](integration_tools.md#field-keys). Only keys are
+stored, never values, and sessions do not record anything there.
 
-```bash
-curl https://<host>/integration/v1/client/integration-tools/surepass/fields?flow=aadhaar_otp \
-  -H "X-API-Key: <client api key>"
-```
-
-```json
-{
-  "items": [
-    {"flow": "aadhaar_otp", "key": "address.zip", "value_type": "string",
-     "first_seen_at": "2026-10-02T09:00:00Z", "last_seen_at": "2026-10-02T09:30:00Z"},
-    {"flow": "aadhaar_otp", "key": "dob", "value_type": "string", "...": "..."},
-    {"flow": "aadhaar_otp", "key": "full_name", "value_type": "string", "...": "..."}
-  ],
-  "total": 3, "limit": 20, "offset": 0
-}
-```
-
-Super admins use `GET /v1/integration-tools/{tool_code}/fields`. A key
-appears after the first completed session that returned it. The keys
-are written after the session is committed, in their own transaction,
-so recording them can never fail a session.
-
-Only the flow's `outputs` are returned as values by `/result`; a
-recorded key can be added to `outputs` in the tool configuration to
-return it.
+Values are still returned only for the flow's `outputs`, by `/result`.
 
 ## Webhooks and polling
 

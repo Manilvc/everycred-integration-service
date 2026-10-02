@@ -1,176 +1,221 @@
+import copy
 from typing import Any
 
-import httpx
-import pytest
 from httpx import AsyncClient
-from sqlalchemy.exc import SQLAlchemyError
 
-from app.features.integration_tools.repository import (
-    IntegrationToolFieldRepository,
-)
 from tests.features.clients.conftest import create_client, issue_api_key
-from tests.features.sessions.conftest import AADHAAR, OTP, FakeProvider, start
+from tests.features.sessions.conftest import (
+    AADHAAR,
+    OTP,
+    TOOL_DEFINITION,
+    start,
+)
 
-ADMIN_FIELDS_URL = "/v1/integration-tools/acme-identity/fields"
+TOOL_URL = "/v1/integration-tools/acme-identity"
+ADMIN_FIELDS_URL = f"{TOOL_URL}/fields"
 CLIENT_FIELDS_URL = "/v1/client/integration-tools/acme-identity/fields"
 
+GLOBAL_FIELDS = [
+    {"flow": "aadhaar_otp", "key": "full_name", "label": "Full name"},
+    {"flow": "aadhaar_otp", "key": "dob", "label": "Date of birth"},
+    {
+        "flow": "aadhaar_otp",
+        "key": "address.zip",
+        "label": "PIN code",
+        "value_type": "string",
+    },
+]
 
-def keys_by_flow(page: dict[str, Any]) -> dict[str, dict[str, str]]:
-    by_flow: dict[str, dict[str, str]] = {}
-    for field in page["items"]:
-        by_flow.setdefault(field["flow"], {})[field["key"]] = field[
-            "value_type"
-        ]
-    return by_flow
+
+def client_fields_url(client_id: str) -> str:
+    return f"/v1/clients/{client_id}/tools/acme-identity/fields"
 
 
-async def test_completed_session_records_provider_keys_not_values(
+async def save_tool(
+    client: AsyncClient, setup: dict[str, Any], fields: list | None
+) -> Any:
+    definition = copy.deepcopy(TOOL_DEFINITION)
+    if fields is not None:
+        definition["fields"] = fields
+    return await client.put(TOOL_URL, json=definition, headers=setup["admin"])
+
+
+def keys(page: dict[str, Any]) -> list[tuple[str, str, str]]:
+    return [
+        (field["flow"], field["key"], field["scope"])
+        for field in page["items"]
+    ]
+
+
+async def test_global_fields_are_saved_with_the_tool(
     client: AsyncClient, setup: dict[str, Any]
 ) -> None:
-    await start(client, setup, id_number=AADHAAR, otp=OTP)
+    saved = await save_tool(client, setup, GLOBAL_FIELDS)
 
-    response = await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
+    listed = await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
 
-    assert response.status_code == 200, response.text
-    # Keys of the final step's response data, with their JSON types.
-    assert keys_by_flow(response.json()) == {
-        "aadhaar_otp": {
-            "dob": "string",
-            "full_name": "string",
-            "status": "string",
-        }
-    }
-    assert "Asha" not in response.text
-    assert "1990-01-01" not in response.text
+    assert saved.status_code == 200, saved.text
+    body = listed.json()
+    assert keys(body) == [
+        ("aadhaar_otp", "address.zip", "global"),
+        ("aadhaar_otp", "dob", "global"),
+        ("aadhaar_otp", "full_name", "global"),
+    ]
+    dob = next(field for field in body["items"] if field["key"] == "dob")
+    assert (dob["label"], dob["value_type"]) == ("Date of birth", "string")
 
 
-async def test_nested_keys_use_dot_paths(
+async def test_saving_the_tool_without_fields_keeps_them(
     client: AsyncClient, setup: dict[str, Any]
 ) -> None:
-    await start(
+    await save_tool(client, setup, GLOBAL_FIELDS)
+    await save_tool(client, setup, None)
+    kept = await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
+    await save_tool(client, setup, [])
+    cleared = await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
+
+    assert kept.json()["total"] == 3
+    assert cleared.json()["total"] == 0
+
+
+async def test_fields_replace_the_previous_list(
+    client: AsyncClient, setup: dict[str, Any]
+) -> None:
+    await save_tool(client, setup, GLOBAL_FIELDS)
+    await save_tool(client, setup, [{"flow": "aadhaar_otp", "key": "gender"}])
+
+    listed = await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
+
+    assert keys(listed.json()) == [("aadhaar_otp", "gender", "global")]
+
+
+async def test_invalid_fields_are_rejected(
+    client: AsyncClient, setup: dict[str, Any]
+) -> None:
+    unknown_flow = await save_tool(
+        client, setup, [{"flow": "no_such_flow", "key": "x"}]
+    )
+    duplicate = await save_tool(
         client,
         setup,
-        flow="employee_profile",
-        integration_type="gather",
-        employee_id="E-1001",
+        [
+            {"flow": "aadhaar_otp", "key": "dob"},
+            {"flow": "aadhaar_otp", "key": "dob"},
+        ],
+    )
+    bad_key = await save_tool(
+        client, setup, [{"flow": "aadhaar_otp", "key": "address..zip"}]
+    )
+    bad_type = await save_tool(
+        client,
+        setup,
+        [{"flow": "aadhaar_otp", "key": "dob", "value_type": "date"}],
     )
 
-    response = await client.get(
-        CLIENT_FIELDS_URL,
-        params={"flow": "employee_profile"},
-        headers=setup["key"],
-    )
-
-    assert keys_by_flow(response.json()) == {
-        "employee_profile": {
-            "employee_code": "string",
-            "org.department": "string",
-            "work_email": "string",
-        }
-    }
+    assert unknown_flow.status_code == 422
+    assert unknown_flow.json()["error"]["code"] == "unknown_tool_flows"
+    assert duplicate.status_code == 422
+    assert bad_key.status_code == 422
+    assert bad_type.status_code == 422
 
 
-async def test_keys_are_recorded_once_and_refreshed(
-    client: AsyncClient, setup: dict[str, Any], provider: FakeProvider
-) -> None:
-    await start(client, setup, id_number=AADHAAR, otp=OTP)
-    first = (await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])).json()
-
-    def with_extra_field(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/otp/submit"):
-            return httpx.Response(
-                200,
-                json={
-                    "success": True,
-                    "data": {
-                        "status": "valid",
-                        "full_name": "Asha Verma",
-                        "dob": 19900101,
-                        "address": {"zip": "411001", "dist": "Pune"},
-                    },
-                },
-            )
-        return provider_default(request)
-
-    provider_default = provider.reply
-    provider.reply = with_extra_field
-    await start(client, setup, id_number=AADHAAR, otp=OTP)
-    second = (
-        await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
-    ).json()
-
-    assert first["total"] == 3
-    assert keys_by_flow(second) == {
-        "aadhaar_otp": {
-            "address.dist": "string",
-            "address.zip": "string",
-            "dob": "number",
-            "full_name": "string",
-            "status": "string",
-        }
-    }
-    full_name = next(f for f in second["items"] if f["key"] == "full_name")
-    assert full_name["last_seen_at"] >= full_name["first_seen_at"]
-
-
-async def test_not_verified_sessions_record_keys_too(
+async def test_client_fields_add_to_global_ones(
     client: AsyncClient, setup: dict[str, Any]
 ) -> None:
-    await start(client, setup, id_number=AADHAAR, otp="000000")
-
-    response = await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
-
-    assert "full_name" in keys_by_flow(response.json())["aadhaar_otp"]
-
-
-async def test_unfinished_and_failed_sessions_record_nothing(
-    client: AsyncClient, setup: dict[str, Any], provider: FakeProvider
-) -> None:
-    await start(client, setup, id_number=AADHAAR)
-    provider.reply = lambda _: httpx.Response(502, text="down")
-    await start(client, setup, id_number=AADHAAR, otp=OTP)
-
-    response = await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
-
-    assert response.json()["items"] == []
-
-
-async def test_recording_failure_does_not_fail_the_session(
-    client: AsyncClient,
-    setup: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def broken_record(*args: Any, **kwargs: Any) -> int:
-        raise SQLAlchemyError("database unavailable")
-
-    monkeypatch.setattr(
-        IntegrationToolFieldRepository, "record", broken_record
+    await save_tool(client, setup, GLOBAL_FIELDS[:1])
+    saved = await client.put(
+        client_fields_url(setup["client_id"]),
+        json={
+            "fields": [
+                {
+                    "flow": "aadhaar_otp",
+                    "key": "care_of",
+                    "label": "Care of",
+                }
+            ]
+        },
+        headers=setup["admin"],
     )
+    admin_view = await client.get(
+        client_fields_url(setup["client_id"]), headers=setup["admin"]
+    )
+    client_view = await client.get(CLIENT_FIELDS_URL, headers=setup["key"])
 
-    response = await start(client, setup, id_number=AADHAAR, otp=OTP)
+    assert saved.status_code == 200, saved.text
+    assert keys(saved.json()) == [("aadhaar_otp", "care_of", "client")]
+    assert keys(admin_view.json()) == [("aadhaar_otp", "care_of", "client")]
+    assert keys(client_view.json()) == [
+        ("aadhaar_otp", "care_of", "client"),
+        ("aadhaar_otp", "full_name", "global"),
+    ]
 
-    assert response.status_code == 201
-    assert response.json()["outcome"] == "verified"
 
-
-async def test_fields_of_tools_outside_the_client_look_missing(
+async def test_client_fields_are_private_to_their_client(
     client: AsyncClient, setup: dict[str, Any]
 ) -> None:
+    await client.put(
+        client_fields_url(setup["client_id"]),
+        json={"fields": [{"flow": "aadhaar_otp", "key": "care_of"}]},
+        headers=setup["admin"],
+    )
     other = await create_client(client, setup["admin"], code="other-portal")
+    for code in ("confirm", "gather"):
+        await client.put(
+            f"/v1/clients/{other['id']}/integrations/{code}",
+            json={"tool_code": "acme-identity"},
+            headers=setup["admin"],
+        )
     other_key = await issue_api_key(client, setup["admin"], other["id"])
 
     response = await client.get(
         CLIENT_FIELDS_URL, headers={"X-API-Key": other_key["api_key"]}
     )
-    unknown = await client.get(
-        "/v1/integration-tools/no-such-tool/fields", headers=setup["admin"]
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+async def test_client_fields_need_an_existing_client_and_tool(
+    client: AsyncClient, setup: dict[str, Any]
+) -> None:
+    unknown_client = await client.put(
+        client_fields_url("00000000-0000-4000-8000-000000000000"),
+        json={"fields": []},
+        headers=setup["admin"],
+    )
+    unknown_tool = await client.get(
+        f"/v1/clients/{setup['client_id']}/tools/no-such-tool/fields",
+        headers=setup["admin"],
     )
 
-    assert response.status_code == 404
-    assert unknown.status_code == 404
-    assert unknown.json()["error"]["code"] == "integration_tool_not_found"
+    assert unknown_client.status_code == 404
+    assert unknown_client.json()["error"]["code"] == "client_not_found"
+    assert unknown_tool.status_code == 404
+    assert unknown_tool.json()["error"]["code"] == "integration_tool_not_found"
 
 
-async def test_field_routes_require_auth(client: AsyncClient) -> None:
-    assert (await client.get(ADMIN_FIELDS_URL)).status_code == 401
-    assert (await client.get(CLIENT_FIELDS_URL)).status_code == 401
+async def test_completed_kyc_no_longer_records_fields(
+    client: AsyncClient, setup: dict[str, Any]
+) -> None:
+    started = await start(client, setup, id_number=AADHAAR, otp=OTP)
+
+    listed = await client.get(ADMIN_FIELDS_URL, headers=setup["admin"])
+
+    assert started.json()["status"] == "completed"
+    assert listed.json()["items"] == []
+
+
+async def test_only_super_admins_manage_fields(
+    client: AsyncClient, setup: dict[str, Any]
+) -> None:
+    with_api_key = await client.put(
+        client_fields_url(setup["client_id"]),
+        json={"fields": []},
+        headers=setup["key"],
+    )
+    anonymous = await client.get(ADMIN_FIELDS_URL)
+    client_anonymous = await client.get(CLIENT_FIELDS_URL)
+
+    assert with_api_key.status_code == 401
+    assert anonymous.status_code == 401
+    assert client_anonymous.status_code == 401

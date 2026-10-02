@@ -218,8 +218,8 @@ setups made through the super admin API keep working.
 
 - **Field mappings** and **sync schedules** from the prototype drawer.
   Per-client field mappings existed briefly and were removed (migration
-  `82996fd0ddf2`); the keys a provider returns are recorded instead
-  (see [sessions](sessions.md#recorded-field-keys)).
+  `82996fd0ddf2`); field keys are entered by a super admin instead
+  (see [integration tools](integration_tools.md#field-keys)).
 - **Deployment** (on-premises vs cloud) is not modelled.
 - The type codes stay `enforcement` and `records`; EveryCRED's own
   screen uses `enforce` and `record` for those groups.

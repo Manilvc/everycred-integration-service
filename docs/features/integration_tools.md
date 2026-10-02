@@ -29,8 +29,9 @@ erDiagram
 | GET | `/v1/integration-tools` | Super admin | Whole catalogue |
 | GET | `/v1/client/integration-tools` | `X-API-Key` | Tools usable for the calling client |
 | PUT | `/v1/integration-tools/{tool_code}` | Super admin | Create or replace a tool, including its `connector_config` |
-| GET | `/v1/integration-tools/{tool_code}/fields` | Super admin | Field keys the tool's provider has returned, per flow |
-| GET | `/v1/client/integration-tools/{tool_code}/fields` | `X-API-Key` | The same, for a tool serving one of the client's enabled types |
+| GET | `/v1/integration-tools/{tool_code}/fields` | Super admin | The tool's global field keys (set with `fields` on `PUT /v1/integration-tools/{tool_code}`) |
+| GET, PUT | `/v1/clients/{client_id}/tools/{tool_code}/fields` | Super admin | One client's own field keys |
+| GET | `/v1/client/integration-tools/{tool_code}/fields` | `X-API-Key` | Global and own field keys, for a tool serving one of the client's enabled types |
 
 ### Admin listing
 
@@ -138,19 +139,70 @@ curl -X PUT http://localhost:8000/v1/clients/<client_id>/integrations/confirm \
 Sending `"tool_code": null` (or omitting it) clears the choice. The
 `PUT` replaces the whole configuration, as before.
 
-## Recorded field keys
+## Field keys
 
-`integration_tool_fields` holds the keys (never values) of providers'
-final responses, recorded when sessions complete; see
-[sessions](sessions.md#recorded-field-keys). Both `/fields` routes take
-`flow`, `limit`, and `offset`, and return a page ordered by flow, then
-key.
+A reference list, entered by a super admin, of the keys a flow's
+provider response holds, such as `full_name`, `dob`, or `address.zip`
+(nested fields use dots). Only keys are stored, never values. Each field
+has `flow`, `key`, an optional `label`, and a `value_type` (`string`,
+the default, or `number`, `boolean`, `object`, `array`).
+
+**Global fields** apply to every client and are sent with the tool:
+
+```json
+PUT /v1/integration-tools/surepass
+{
+  "name": "SurePass",
+  "integration_types": ["confirm"],
+  "connector_config": {"...": "..."},
+  "fields": [
+    {"flow": "aadhaar_otp", "key": "full_name", "label": "Full name"},
+    {"flow": "aadhaar_otp", "key": "dob", "label": "Date of birth"},
+    {"flow": "aadhaar_otp", "key": "address.zip", "label": "PIN code"}
+  ]
+}
+```
+
+`fields` replaces the global list; leave it out to keep the list, send
+`[]` to remove it.
+
+**Client fields** add to the global ones for one client:
+
+```json
+PUT /v1/clients/{client_id}/tools/surepass/fields
+{"fields": [{"flow": "aadhaar_otp", "key": "care_of", "label": "Care of"}]}
+```
+
+The body replaces that client's list. `GET` on the same path lists them.
+
+**Reading them** from a client backend returns both, each with its
+`scope`:
+
+```json
+GET /v1/client/integration-tools/surepass/fields?flow=aadhaar_otp
+{
+  "items": [
+    {"flow": "aadhaar_otp", "key": "care_of", "label": "Care of",
+     "value_type": "string", "scope": "client", "created_at": "…", "updated_at": "…"},
+    {"flow": "aadhaar_otp", "key": "full_name", "label": "Full name",
+     "value_type": "string", "scope": "global", "created_at": "…", "updated_at": "…"}
+  ],
+  "total": 2, "limit": 20, "offset": 0
+}
+```
+
+Rules: keys are up to 8 segments of letters, digits, `_` or `-` joined
+by dots; a flow and key may appear once per list (`422` otherwise); at
+most 300 fields per list; when the tool has flows configured, every
+field must name one of them (`422 unknown_tool_flows`). Lists are
+ordered by flow, then key, with global fields before client ones for
+the same key.
 
 | Column | Meaning |
 |--------|---------|
-| `integration_tool_id`, `flow`, `key` | Unique together; `key` is a dot path such as `address.zip` |
-| `value_type` | JSON type last seen: `string`, `number`, `boolean`, `object`, `array`, `null` |
-| `created_at` / `last_seen_at` | First and last time a completed session returned the key |
+| `integration_tool_id`, `client_id`, `flow`, `key` | Unique together; `client_id` empty for global fields |
+| `label` | Optional display name |
+| `value_type` | `string`, `number`, `boolean`, `object`, or `array` |
 
 ## Data model
 

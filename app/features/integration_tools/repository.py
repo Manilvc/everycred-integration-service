@@ -2,9 +2,9 @@
 
 import uuid
 from collections.abc import Collection, Sequence
-from datetime import datetime
+from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.integration_tools.models import (
@@ -114,13 +114,24 @@ class IntegrationToolFieldRepository:
         self,
         integration_tool_id: uuid.UUID,
         *,
+        client_ids: Collection[uuid.UUID | None],
         flow: str | None,
         limit: int,
         offset: int,
     ) -> tuple[Sequence[IntegrationToolField], int]:
-        """Return one page of a tool's fields, by flow then key."""
+        """Return one page of a tool's fields in the given scopes.
+
+        Args:
+            integration_tool_id: Tool whose fields to return.
+            client_ids: Scopes to include; ``None`` stands for the
+                global fields, a client id for that client's own.
+            flow: Keep only fields of this flow.
+            limit: Maximum number of fields to return.
+            offset: Number of fields to skip.
+        """
         filters = [
-            IntegrationToolField.integration_tool_id == integration_tool_id
+            IntegrationToolField.integration_tool_id == integration_tool_id,
+            self._in_scopes(client_ids),
         ]
         if flow is not None:
             filters.append(IntegrationToolField.flow == flow)
@@ -132,50 +143,46 @@ class IntegrationToolFieldRepository:
         fields = await self.session.scalars(
             select(IntegrationToolField)
             .where(*filters)
-            .order_by(IntegrationToolField.flow, IntegrationToolField.key)
+            .order_by(
+                IntegrationToolField.flow,
+                IntegrationToolField.key,
+                # Global before client fields for the same key.
+                IntegrationToolField.client_id.is_not(None),
+            )
             .limit(limit)
             .offset(offset)
         )
         return fields.all(), total or 0
 
-    async def record(
+    async def replace(
         self,
         integration_tool_id: uuid.UUID,
-        flow: str,
-        types_by_key: dict[str, str],
-        seen_at: datetime,
-    ) -> int:
-        """Stage seen fields: new keys are added, known ones refreshed.
+        client_id: uuid.UUID | None,
+        fields: Sequence[IntegrationToolField],
+    ) -> None:
+        """Make ``fields`` the whole list for one scope of a tool.
 
-        Returns:
-            How many keys were new.
+        Staged only; the caller commits, so the old list is replaced
+        atomically.
         """
-        if not types_by_key:
-            return 0
-        known = {
-            field.key: field
-            for field in await self.session.scalars(
-                select(IntegrationToolField).where(
-                    IntegrationToolField.integration_tool_id
-                    == integration_tool_id,
-                    IntegrationToolField.flow == flow,
-                    IntegrationToolField.key.in_(list(types_by_key)),
-                )
+        await self.session.execute(
+            delete(IntegrationToolField).where(
+                IntegrationToolField.integration_tool_id
+                == integration_tool_id,
+                self._in_scopes([client_id]),
             )
-        }
-        for key, value_type in types_by_key.items():
-            field = known.get(key)
-            if field is None:
-                self.session.add(
-                    IntegrationToolField(
-                        integration_tool_id=integration_tool_id,
-                        flow=flow,
-                        key=key,
-                        value_type=value_type,
-                        last_seen_at=seen_at,
-                    )
-                )
-            else:
-                field.value_type = value_type
-                field.last_seen_at = seen_at
-        return len(types_by_key) - len(known)
+        )
+        for field in fields:
+            field.integration_tool_id = integration_tool_id
+            field.client_id = client_id
+            self.session.add(field)
+
+    @staticmethod
+    def _in_scopes(client_ids: Collection[uuid.UUID | None]) -> Any:
+        ids = [client_id for client_id in client_ids if client_id]
+        conditions = []
+        if None in client_ids:
+            conditions.append(IntegrationToolField.client_id.is_(None))
+        if ids:
+            conditions.append(IntegrationToolField.client_id.in_(ids))
+        return or_(*conditions) if conditions else false()

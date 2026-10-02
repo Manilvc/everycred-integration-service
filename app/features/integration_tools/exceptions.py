@@ -31,3 +31,17 @@ class UnknownIntegrationTypesError(AppError):
         super().__init__(
             "Unknown integration types: " + ", ".join(sorted(codes)) + "."
         )
+
+
+class UnknownToolFlowsError(AppError):
+    """Raised when fields name flows the tool does not have."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "unknown_tool_flows"
+
+    def __init__(self, tool_code: str, flows: list[str]) -> None:
+        super().__init__(
+            f"Tool '{tool_code}' has no flows named: "
+            + ", ".join(sorted(flows))
+            + "."
+        )

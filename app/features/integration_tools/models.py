@@ -1,7 +1,7 @@
 """ORM models for integration tools and the types they serve."""
 
 import uuid
-from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
@@ -20,11 +21,12 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.core.models import TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
+from app.core.models import TimestampMixin, UUIDPrimaryKeyMixin
 from app.features.integration_types.models import IntegrationType
 
 TOOL_CODE_MAX_LENGTH = 50
 FIELD_KEY_MAX_LENGTH = 255
+FIELD_LABEL_MAX_LENGTH = 100
 FLOW_NAME_MAX_LENGTH = 64
 TOOL_NAME_MAX_LENGTH = 100
 PROVIDER_MAX_LENGTH = 100
@@ -112,31 +114,48 @@ class IntegrationTool(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         )
 
 
-class IntegrationToolField(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """A field key a tool's provider has returned, without its value.
+class FieldValueType(StrEnum):
+    """JSON type of a field's value in the provider's response."""
 
-    Recorded automatically each time a session of the flow completes,
-    from the provider's final response, so client backends can see which
-    keys exist (``full_name``, ``dob``, ``address.zip``...) and refer to
-    them. Values are personal data and are never stored here.
+    STRING = "string"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+    OBJECT = "object"
+    ARRAY = "array"
+
+
+class IntegrationToolField(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A field key a tool's provider returns, entered by a super admin.
+
+    A reference list for client backends: which keys a flow's response
+    holds (``full_name``, ``dob``, ``address.zip``...), so they can be
+    named consistently. Only keys are stored, never values.
+
+    Global fields (``client_id`` empty) apply to every client; client
+    fields add to them for one client only.
 
     Attributes:
-        integration_tool_id: Tool whose provider returned the field.
-        flow: Flow whose final response contained it.
-        key: Dot path of the field in the response data.
-        value_type: JSON type last seen: ``string``, ``number``,
-            ``boolean``, ``object``, ``array``, or ``null``.
-        last_seen_at: When a response last contained the field;
-            ``created_at`` is when it was first seen.
+        integration_tool_id: Tool whose provider returns the field.
+        client_id: The client the field is for, or None when global.
+        flow: Flow whose response holds the field.
+        key: Dot path of the field in the provider's response data.
+        label: Human-readable name, e.g. "Date of birth".
+        value_type: JSON type of the value; see :class:`FieldValueType`.
     """
 
     __tablename__ = "integration_tool_fields"
     __table_args__ = (
         UniqueConstraint(
             "integration_tool_id",
+            "client_id",
             "flow",
             "key",
-            name="uq_integration_tool_fields_tool_flow_key",
+            name="uq_integration_tool_fields_scope_flow_key",
+        ),
+        Index(
+            "ix_integration_tool_fields_tool_client",
+            "integration_tool_id",
+            "client_id",
         ),
     )
 
@@ -149,11 +168,21 @@ class IntegrationToolField(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         nullable=False,
     )
+    client_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "clients.id",
+            ondelete="CASCADE",
+            name="fk_integration_tool_fields_client",
+        ),
+    )
     flow: Mapped[str] = mapped_column(
         String(FLOW_NAME_MAX_LENGTH), nullable=False
     )
     key: Mapped[str] = mapped_column(
         String(FIELD_KEY_MAX_LENGTH), nullable=False
     )
-    value_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(FIELD_LABEL_MAX_LENGTH))
+    value_type: Mapped[str] = mapped_column(
+        String(20), default=FieldValueType.STRING, nullable=False
+    )

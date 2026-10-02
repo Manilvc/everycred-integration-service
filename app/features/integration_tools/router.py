@@ -1,10 +1,12 @@
 """Routes for browsing integration tools.
 
-Two routers share the same service: one for super admins, who see the
-whole catalogue, and one for clients, who see only the tools usable for
-their enabled integration types.
+Three routers share the same service: one for super admins, who see the
+whole catalogue; one for clients, who see only the tools usable for
+their enabled integration types; and one for super admins to manage a
+client's own field keys for a tool.
 """
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, status
@@ -24,6 +26,7 @@ from app.features.integration_tools.schemas import (
     IntegrationToolResponse,
     IntegrationToolUpsert,
     ToolFieldQuery,
+    ToolFieldsUpdate,
 )
 from app.features.super_admins.dependencies import get_current_super_admin
 from app.shared.schemas import ErrorResponse, Page
@@ -110,18 +113,39 @@ async def upsert_integration_tool(
 
 ToolCode = Annotated[str, Path(min_length=1, max_length=TOOL_CODE_MAX_LENGTH)]
 _FIELDS_DESCRIPTION = """
-Keys are recorded automatically, without values, from the provider's
-final response each time a session of the flow completes. A key appears
-here after the first completed session that returned it. Nested fields
-use dots (`address.zip`); arrays are listed as `array` without their
-items.
+Field keys a super admin entered for the tool: the keys a flow's
+provider response holds, such as `full_name` or `address.zip` (nested
+fields use dots). Only keys are stored, never values. Global fields are
+set with the tool definition (`fields` in `PUT /v1/integration-tools/
+{tool_code}`); client fields with `PUT /v1/clients/{client_id}/tools/
+{tool_code}/fields`.
 """
+
+client_fields_router = APIRouter(
+    prefix="/clients/{client_id}/tools/{tool_code}/fields",
+    tags=["Clients"],
+    dependencies=[Depends(get_current_super_admin)],
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "model": ErrorResponse,
+            "description": "Missing or invalid super admin token",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "model": ErrorResponse,
+            "description": "Token does not belong to a super admin",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "Client or tool not found",
+        },
+    },
+)
 
 
 @admin_router.get(
     "/{tool_code}/fields",
     response_model=Page[IntegrationToolFieldResponse],
-    summary="List the field keys a tool's provider returns",
+    summary="List a tool's global field keys",
     description=_FIELDS_DESCRIPTION,
     responses={
         status.HTTP_404_NOT_FOUND: {
@@ -135,14 +159,14 @@ async def list_integration_tool_fields(
     filters: ToolFieldQuery,
     service: IntegrationToolServiceDep,
 ) -> Page[IntegrationToolFieldResponse]:
-    """Return a tool's recorded field keys, by flow then key."""
+    """Return a tool's global field keys, by flow then key."""
     return await service.list_tool_fields(tool_code, filters)
 
 
 @client_router.get(
     "/{tool_code}/fields",
     response_model=Page[IntegrationToolFieldResponse],
-    summary="List the field keys a tool's provider returns",
+    summary="List a tool's field keys for your backend",
     description=_FIELDS_DESCRIPTION,
     responses={
         status.HTTP_404_NOT_FOUND: {
@@ -157,7 +181,10 @@ async def list_client_integration_tool_fields(
     current_client: CurrentClient,
     service: IntegrationToolServiceDep,
 ) -> Page[IntegrationToolFieldResponse]:
-    """Return the field keys of a tool you can use, by flow then key."""
+    """Return the global fields and your own, by flow then key.
+
+    Each field's `scope` is `global` or `client`.
+    """
     return await service.list_tool_fields_for_client(
         current_client, tool_code, filters
     )
@@ -179,3 +206,43 @@ async def list_client_integration_tools(
     `kwargs` to save for your users' connections.
     """
     return await service.list_tools_for_client(current_client, filters)
+
+
+@client_fields_router.get(
+    "",
+    response_model=Page[IntegrationToolFieldResponse],
+    summary="List a client's own field keys for a tool",
+)
+async def list_client_tool_fields(
+    client_id: uuid.UUID,
+    tool_code: ToolCode,
+    filters: ToolFieldQuery,
+    service: IntegrationToolServiceDep,
+) -> Page[IntegrationToolFieldResponse]:
+    """Return the fields added for this client only, not global ones."""
+    return await service.list_client_tool_fields(client_id, tool_code, filters)
+
+
+@client_fields_router.put(
+    "",
+    response_model=Page[IntegrationToolFieldResponse],
+    summary="Set a client's own field keys for a tool",
+    responses={
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ErrorResponse,
+            "description": "Invalid field, duplicate, or unknown flow",
+        }
+    },
+)
+async def set_client_tool_fields(
+    client_id: uuid.UUID,
+    tool_code: ToolCode,
+    update: ToolFieldsUpdate,
+    service: IntegrationToolServiceDep,
+) -> Page[IntegrationToolFieldResponse]:
+    """Replace the client's field list for the tool; `[]` removes all.
+
+    These add to the tool's global fields for this client only. Only
+    keys are stored, never values.
+    """
+    return await service.set_client_tool_fields(client_id, tool_code, update)

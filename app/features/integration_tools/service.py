@@ -13,11 +13,16 @@ from app.connectors.resolution import (
     connector_kind,
     resolve_connector,
 )
+from app.features.clients.exceptions import ClientNotFoundError
 from app.features.clients.models import Client
-from app.features.clients.repository import ClientIntegrationConfigRepository
+from app.features.clients.repository import (
+    ClientIntegrationConfigRepository,
+    ClientRepository,
+)
 from app.features.integration_tools.exceptions import (
     IntegrationToolNotFoundError,
     UnknownIntegrationTypesError,
+    UnknownToolFlowsError,
 )
 from app.features.integration_tools.models import (
     IntegrationTool,
@@ -31,6 +36,7 @@ from app.features.integration_tools.schemas import (
     ClientToolFilters,
     ConnectorInfo,
     ConnectorParameterResponse,
+    FieldScope,
     FlowDescriptionResponse,
     IntegrationToolFieldResponse,
     IntegrationToolFilters,
@@ -39,10 +45,13 @@ from app.features.integration_tools.schemas import (
     IntegrationTypeSummary,
     OperationDescriptionResponse,
     ToolFieldFilters,
+    ToolFieldInput,
+    ToolFieldsUpdate,
 )
 from app.features.integration_types.repository import (
     IntegrationTypeRepository,
 )
+from app.shared.pagination import MAX_PAGE_SIZE
 from app.shared.schemas import Page
 
 logger = logging.getLogger(__name__)
@@ -54,9 +63,10 @@ class IntegrationToolService:
     Attributes:
         session: Unit of work for the request; committed on upsert.
         tools: Persistence for integration tools.
-        tool_fields: Field keys recorded from providers' responses.
+        tool_fields: Field keys entered for tools, global or per client.
         integration_types: Looks up the types a tool serves.
         client_configs: Tells which types a client has enabled.
+        clients: Looks up clients for their own field lists.
         registry: Connector code, used to describe each tool's
             arguments and whether it can be connected yet.
     """
@@ -68,6 +78,7 @@ class IntegrationToolService:
         tool_fields: IntegrationToolFieldRepository,
         integration_types: IntegrationTypeRepository,
         client_configs: ClientIntegrationConfigRepository,
+        clients: ClientRepository,
         registry: ConnectorRegistry,
     ) -> None:
         self.session = session
@@ -75,6 +86,7 @@ class IntegrationToolService:
         self.tool_fields = tool_fields
         self.integration_types = integration_types
         self.client_configs = client_configs
+        self.clients = clients
         self.registry = registry
 
     async def upsert_tool(
@@ -82,8 +94,12 @@ class IntegrationToolService:
     ) -> IntegrationToolResponse:
         """Create the tool ``code`` or replace its whole definition.
 
+        ``fields``, when sent, replaces the tool's global field list.
+
         Raises:
             UnknownIntegrationTypesError: A listed type does not exist.
+            UnknownToolFlowsError: A field names a flow the tool does not
+                have.
         """
         integration_types = await self.integration_types.get_by_codes(
             definition.integration_types
@@ -110,6 +126,13 @@ class IntegrationToolService:
             if definition.connector_config
             else None
         )
+        if definition.fields is not None:
+            self._check_field_flows(tool, definition.fields)
+            # A new tool's id is assigned on flush; fields refer to it.
+            await self.session.flush()
+            await self.tool_fields.replace(
+                tool.id, None, self._to_field_rows(definition.fields)
+            )
         await self.session.commit()
         logger.info(
             "Integration tool %s %s", code, "created" if is_new else "updated"
@@ -166,20 +189,18 @@ class IntegrationToolService:
     async def list_tool_fields(
         self, tool_code: str, filters: ToolFieldFilters
     ) -> Page[IntegrationToolFieldResponse]:
-        """Return the field keys a tool's provider has returned.
+        """Return a tool's global field keys.
 
         Raises:
             IntegrationToolNotFoundError: No tool has this code.
         """
-        tool = await self.tools.get_by_code(tool_code)
-        if tool is None:
-            raise IntegrationToolNotFoundError(tool_code)
-        return await self._fields_page(tool, filters)
+        tool = await self._get_tool_or_raise(tool_code)
+        return await self._fields_page(tool, [None], filters)
 
     async def list_tool_fields_for_client(
         self, client: Client, tool_code: str, filters: ToolFieldFilters
     ) -> Page[IntegrationToolFieldResponse]:
-        """Return a tool's field keys, if the client can use the tool.
+        """Return a tool's global fields and the client's own.
 
         Raises:
             IntegrationToolNotFoundError: The tool does not exist, is
@@ -199,13 +220,60 @@ class IntegrationToolService:
             )
         ):
             raise IntegrationToolNotFoundError(tool_code)
-        return await self._fields_page(tool, filters)
+        return await self._fields_page(tool, [None, client.id], filters)
+
+    async def list_client_tool_fields(
+        self, client_id: uuid.UUID, tool_code: str, filters: ToolFieldFilters
+    ) -> Page[IntegrationToolFieldResponse]:
+        """Return the fields added for one client only.
+
+        Raises:
+            ClientNotFoundError: No client has this id.
+            IntegrationToolNotFoundError: No tool has this code.
+        """
+        tool = await self._get_tool_or_raise(tool_code)
+        await self._get_client_or_raise(client_id)
+        return await self._fields_page(tool, [client_id], filters)
+
+    async def set_client_tool_fields(
+        self, client_id: uuid.UUID, tool_code: str, update: ToolFieldsUpdate
+    ) -> Page[IntegrationToolFieldResponse]:
+        """Replace the fields added for one client, and return them.
+
+        Raises:
+            ClientNotFoundError: No client has this id.
+            IntegrationToolNotFoundError: No tool has this code.
+            UnknownToolFlowsError: A field names a flow the tool does not
+                have.
+        """
+        tool = await self._get_tool_or_raise(tool_code)
+        await self._get_client_or_raise(client_id)
+        self._check_field_flows(tool, update.fields)
+        await self.tool_fields.replace(
+            tool.id, client_id, self._to_field_rows(update.fields)
+        )
+        await self.session.commit()
+        logger.info(
+            "Set %s fields of tool %s for client %s",
+            len(update.fields),
+            tool_code,
+            client_id,
+        )
+        return await self._fields_page(
+            tool,
+            [client_id],
+            ToolFieldFilters(limit=MAX_PAGE_SIZE),
+        )
 
     async def _fields_page(
-        self, tool: IntegrationTool, filters: ToolFieldFilters
+        self,
+        tool: IntegrationTool,
+        client_ids: list[uuid.UUID | None],
+        filters: ToolFieldFilters,
     ) -> Page[IntegrationToolFieldResponse]:
         fields, total = await self.tool_fields.list_page(
             tool.id,
+            client_ids=client_ids,
             flow=filters.flow,
             limit=filters.limit,
             offset=filters.offset,
@@ -217,6 +285,51 @@ class IntegrationToolService:
             offset=filters.offset,
         )
 
+    def _check_field_flows(
+        self, tool: IntegrationTool, fields: list[ToolFieldInput]
+    ) -> None:
+        # Tools without configured flows (Python connectors, or none
+        # yet) accept any flow name, since there is nothing to check.
+        connector_class = resolve_connector(
+            tool.code, tool.connector_config, self.registry
+        )
+        flows = (
+            connector_class.describe_flows(tool.connector_config)
+            if connector_class
+            else {}
+        )
+        if not flows:
+            return
+        unknown = {field.flow for field in fields} - set(flows)
+        if unknown:
+            raise UnknownToolFlowsError(tool.code, list(unknown))
+
+    async def _get_tool_or_raise(self, tool_code: str) -> IntegrationTool:
+        tool = await self.tools.get_by_code(tool_code)
+        if tool is None:
+            raise IntegrationToolNotFoundError(tool_code)
+        return tool
+
+    async def _get_client_or_raise(self, client_id: uuid.UUID) -> Client:
+        client = await self.clients.get_by_id(client_id)
+        if client is None:
+            raise ClientNotFoundError(client_id)
+        return client
+
+    @staticmethod
+    def _to_field_rows(
+        fields: list[ToolFieldInput],
+    ) -> list[IntegrationToolField]:
+        return [
+            IntegrationToolField(
+                flow=field.flow,
+                key=field.key,
+                label=field.label,
+                value_type=field.value_type,
+            )
+            for field in fields
+        ]
+
     @staticmethod
     def _to_field_response(
         field: IntegrationToolField,
@@ -224,9 +337,11 @@ class IntegrationToolService:
         return IntegrationToolFieldResponse(
             flow=field.flow,
             key=field.key,
+            label=field.label,
             value_type=field.value_type,
-            first_seen_at=field.created_at,
-            last_seen_at=field.last_seen_at,
+            scope=FieldScope.CLIENT if field.client_id else FieldScope.GLOBAL,
+            created_at=field.created_at,
+            updated_at=field.updated_at,
         )
 
     def _to_response(
