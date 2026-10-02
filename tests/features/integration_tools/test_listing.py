@@ -124,7 +124,7 @@ async def test_client_sees_only_active_tools_of_enabled_types(
 ) -> None:
     portal = await create_client(client, super_admin_headers)
     await client.put(
-        f"/api/v1/clients/{portal['id']}/integrations/confirm",
+        f"/v1/clients/{portal['id']}/integrations/confirm",
         json={},
         headers=super_admin_headers,
     )

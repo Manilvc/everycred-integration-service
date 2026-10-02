@@ -198,7 +198,7 @@ async def test_client_field_mappings_override_outputs(
     client: AsyncClient, setup: dict[str, Any]
 ) -> None:
     saved = await client.put(
-        "/api/v1/client/integrations/acme-identity",
+        "/v1/client/integrations/acme-identity",
         json={
             "field_mappings": {
                 "employee_profile": {
@@ -234,7 +234,7 @@ async def test_field_mappings_for_unknown_flow_are_rejected(
     client: AsyncClient, setup: dict[str, Any]
 ) -> None:
     response = await client.put(
-        "/api/v1/client/integrations/acme-identity",
+        "/v1/client/integrations/acme-identity",
         json={"field_mappings": {"no_such_flow": {"a": "b"}}},
         headers=setup["key"],
     )
@@ -408,7 +408,7 @@ async def test_tool_listing_describes_flows(
     client: AsyncClient, setup: dict[str, Any]
 ) -> None:
     response = await client.get(
-        "/api/v1/integration-tools", headers=setup["admin"]
+        "/v1/integration-tools", headers=setup["admin"]
     )
 
     (tool,) = response.json()["items"]

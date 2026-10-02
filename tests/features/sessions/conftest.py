@@ -160,7 +160,7 @@ async def setup(
         )
         await session.commit()
     tool = await client.put(
-        "/api/v1/integration-tools/acme-identity",
+        "/v1/integration-tools/acme-identity",
         json=TOOL_DEFINITION,
         headers=super_admin_headers,
     )
@@ -168,13 +168,13 @@ async def setup(
     portal = await create_client(client, super_admin_headers)
     for code in ("confirm", "gather"):
         config = await client.put(
-            f"/api/v1/clients/{portal['id']}/integrations/{code}",
+            f"/v1/clients/{portal['id']}/integrations/{code}",
             json={"tool_code": "acme-identity"},
             headers=super_admin_headers,
         )
         assert config.status_code == 200, config.text
     credentials = await client.put(
-        f"/api/v1/clients/{portal['id']}/tools/acme-identity/credentials",
+        f"/v1/clients/{portal['id']}/tools/acme-identity/credentials",
         json={"credentials": {"api_token": API_TOKEN}},
         headers=super_admin_headers,
     )
@@ -188,11 +188,11 @@ async def setup(
 
 
 def sessions_url(user: str = USER) -> str:
-    return f"/api/v1/client/users/{user}/sessions"
+    return f"/v1/client/users/{user}/sessions"
 
 
 def session_url(session_id: str, action: str = "") -> str:
-    base = f"/api/v1/client/sessions/{session_id}"
+    base = f"/v1/client/sessions/{session_id}"
     return f"{base}/{action}" if action else base
 
 

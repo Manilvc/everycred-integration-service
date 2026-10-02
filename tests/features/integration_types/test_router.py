@@ -6,7 +6,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.features.integration_types.models import IntegrationType
 
-LIST_URL = "/api/v1/integration-types"
+LIST_URL = "/v1/integration-types"
 
 
 @pytest.fixture
@@ -49,9 +49,7 @@ async def test_listing_requires_a_token(client: AsyncClient) -> None:
 async def test_listing_rejects_tokens_for_other_roles(
     client: AsyncClient, super_admin_headers: dict[str, str]
 ) -> None:
-    me = await client.get(
-        "/api/v1/super-admins/me", headers=super_admin_headers
-    )
+    me = await client.get("/v1/super-admins/me", headers=super_admin_headers)
     other_role = create_access_token(
         me.json()["id"], "tenant_admin", get_settings()
     )

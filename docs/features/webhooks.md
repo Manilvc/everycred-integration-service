@@ -16,10 +16,10 @@ All routes require `X-API-Key`.
 
 | Method | Path | Summary |
 |--------|------|---------|
-| GET    | `/api/v1/client/webhook` | Show the endpoint (no secret) |
-| PUT    | `/api/v1/client/webhook` | Create or change it (`url`, `is_active`, `rotate_secret`) |
-| DELETE | `/api/v1/client/webhook` | Remove it and its secret |
-| POST   | `/api/v1/client/webhook/test` | Send a `webhook.test` event now |
+| GET    | `/v1/client/webhook` | Show the endpoint (no secret) |
+| PUT    | `/v1/client/webhook` | Create or change it (`url`, `is_active`, `rotate_secret`) |
+| DELETE | `/v1/client/webhook` | Remove it and its secret |
+| POST   | `/v1/client/webhook/test` | Send a `webhook.test` event now |
 
 The response to the first `PUT`, and to one with `rotate_secret: true`,
 includes `signing_secret` (`whsec_...`). It is shown only then; store it

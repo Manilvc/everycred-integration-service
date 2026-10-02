@@ -53,18 +53,18 @@ client can only reach its own sessions (others return `404`).
 
 | Method | Path | Summary |
 |--------|------|---------|
-| POST | `/api/v1/client/users/{user_uuid}/sessions` | Start a session |
-| GET  | `/api/v1/client/users/{user_uuid}/sessions` | List a user's sessions (`status`, `integration_type`, `limit`, `offset`) |
-| GET  | `/api/v1/client/sessions/{id}` | Poll status |
-| POST | `/api/v1/client/sessions/{id}/inputs` | Submit what the session is waiting for |
-| GET  | `/api/v1/client/sessions/{id}/result` | Read the attributes |
-| POST | `/api/v1/client/sessions/{id}/cancel` | Cancel and discard inputs |
+| POST | `/v1/client/users/{user_uuid}/sessions` | Start a session |
+| GET  | `/v1/client/users/{user_uuid}/sessions` | List a user's sessions (`status`, `integration_type`, `limit`, `offset`) |
+| GET  | `/v1/client/sessions/{id}` | Poll status |
+| POST | `/v1/client/sessions/{id}/inputs` | Submit what the session is waiting for |
+| GET  | `/v1/client/sessions/{id}/result` | Read the attributes |
+| POST | `/v1/client/sessions/{id}/cancel` | Cancel and discard inputs |
 
 ### Start
 
 ```bash
 curl -X POST \
-  https://<host>/integration/api/v1/client/users/<holder uuid>/sessions \
+  https://<host>/integration/v1/client/users/<holder uuid>/sessions \
   -H "X-API-Key: <client api key>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -100,7 +100,7 @@ present runs to the end in this one call.
 ### Submit inputs
 
 ```bash
-curl -X POST https://<host>/integration/api/v1/client/sessions/<id>/inputs \
+curl -X POST https://<host>/integration/v1/client/sessions/<id>/inputs \
   -H "X-API-Key: <client api key>" -H "Content-Type: application/json" \
   -d '{"inputs": {"otp": "123456"}}'
 ```
@@ -168,7 +168,7 @@ step's data (`org.department`, `items.0.id`) or to captured values
 tool from the Integrations drawer:
 
 ```bash
-curl -X PUT https://<host>/integration/api/v1/client/integrations/acme-hrms \
+curl -X PUT https://<host>/integration/v1/client/integrations/acme-hrms \
   -H "X-API-Key: <client api key>" -H "Content-Type: application/json" \
   -d '{"field_mappings": {"employee_profile": {"employee_number": "employee_code"}}}'
 ```

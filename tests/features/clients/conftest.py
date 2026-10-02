@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.features.integration_types.models import IntegrationType
 
-CLIENTS_URL = "/api/v1/clients"
-OWN_CONFIGURATION_URL = "/api/v1/client/configuration"
+CLIENTS_URL = "/v1/clients"
+OWN_CONFIGURATION_URL = "/v1/client/configuration"
 
 
 @pytest.fixture

@@ -203,7 +203,7 @@ async def run_user_operation(
     credentials from the secret store, merges the `kwargs` sent here on
     top, runs the operation, and returns a normalised result. Find each
     tool's operations and required inputs in
-    `GET /api/v1/client/integration-tools`.
+    `GET /v1/client/integration-tools`.
 
     A provider rejecting the request (an invalid document number, say)
     is `200` with `success: false`; errors mean the call could not be

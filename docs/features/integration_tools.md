@@ -26,9 +26,9 @@ erDiagram
 
 | Method | Path | Auth | Summary |
 |--------|------|------|---------|
-| GET | `/api/v1/integration-tools` | Super admin | Whole catalogue |
-| GET | `/api/v1/client/integration-tools` | `X-API-Key` | Tools usable for the calling client |
-| PUT | `/api/v1/integration-tools/{tool_code}` | Super admin | Create or replace a tool, including its `connector_config` |
+| GET | `/v1/integration-tools` | Super admin | Whole catalogue |
+| GET | `/v1/client/integration-tools` | `X-API-Key` | Tools usable for the calling client |
+| PUT | `/v1/integration-tools/{tool_code}` | Super admin | Create or replace a tool, including its `connector_config` |
 
 ### Admin listing
 
@@ -80,7 +80,7 @@ Use the admin API; it validates everything, including the connector
 configuration (see [connectors](../connectors.md)):
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/integration-tools/surepass \
+curl -X PUT http://localhost:8000/v1/integration-tools/surepass \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   --data @docs/examples/surepass-tool.json
@@ -122,7 +122,7 @@ with `connector.is_available: false` and connect calls answer `501`.
 Super admins pass `tool_code` when setting a client's configuration:
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/clients/<client_id>/integrations/confirm \
+curl -X PUT http://localhost:8000/v1/clients/<client_id>/integrations/confirm \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   -d '{"is_enabled": true, "tool_code": "acme-verify", "settings": {}}'

@@ -35,17 +35,17 @@ All routes require `X-API-Key`.
 
 | Method | Path | Summary |
 |--------|------|---------|
-| GET    | `/api/v1/client/users/{user_uuid}/integrations` | The integrations the user is connected to, grouped by type |
-| GET    | `/api/v1/client/users/{user_uuid}/connections` | List the user's connections |
-| GET    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Get one connection |
-| PUT    | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Save `args` / `kwargs` and connect |
-| POST   | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}/connect` | Connect again with the saved parameters |
-| POST   | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}/operations/{operation}` | Run one operation of the tool |
-| DELETE | `/api/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Delete the connection |
+| GET    | `/v1/client/users/{user_uuid}/integrations` | The integrations the user is connected to, grouped by type |
+| GET    | `/v1/client/users/{user_uuid}/connections` | List the user's connections |
+| GET    | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Get one connection |
+| PUT    | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Save `args` / `kwargs` and connect |
+| POST   | `/v1/client/users/{user_uuid}/connections/{integration_type_code}/connect` | Connect again with the saved parameters |
+| POST   | `/v1/client/users/{user_uuid}/connections/{integration_type_code}/operations/{operation}` | Run one operation of the tool |
+| DELETE | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Delete the connection |
 
 ### A user's integrations with connection status
 
-`GET /api/v1/client/users/{user_uuid}/integrations` returns the same
+`GET /v1/client/users/{user_uuid}/integrations` returns the same
 envelope and group shape as the client's Integrations screen
 ([client integrations](client_integrations.md#list)), for one user.
 Each group lists the tool the client routes that type through, plus
@@ -118,7 +118,7 @@ built-in tools such as the Holder Wallet App.
 
 ```bash
 curl -X PUT \
-  http://localhost:8000/api/v1/client/users/<user_uuid>/connections/confirm \
+  http://localhost:8000/v1/client/users/<user_uuid>/connections/confirm \
   -H "X-API-Key: <client api key>" \
   -H "Content-Type: application/json" \
   -d '{"args": ["<provider token>"], "kwargs": {"region": "in"}}'
@@ -172,7 +172,7 @@ setting the tool up.
 
 ```bash
 curl -X POST \
-  http://localhost:8000/api/v1/client/users/<user_uuid>/connections/confirm/connect \
+  http://localhost:8000/v1/client/users/<user_uuid>/connections/confirm/connect \
   -H "X-API-Key: <client api key>"
 ```
 
@@ -185,7 +185,7 @@ curl -X POST \
 
 ```bash
 curl -X POST \
-  http://localhost:8000/api/v1/client/users/<user_uuid>/connections/confirm/operations/verify_document \
+  http://localhost:8000/v1/client/users/<user_uuid>/connections/confirm/operations/verify_document \
   -H "X-API-Key: <client api key>" \
   -H "Content-Type: application/json" \
   -d '{"kwargs": {"id_number": "<document number>"}}'

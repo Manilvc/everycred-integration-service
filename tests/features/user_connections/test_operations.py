@@ -18,8 +18,8 @@ from tests.features.clients.conftest import create_client, issue_api_key
 
 USER = "33333333-3333-4333-8333-333333333333"
 API_TOKEN = "sp-token-do-not-leak"
-TOOL_URL = "/api/v1/integration-tools/acme-http"
-BASE = f"/api/v1/client/users/{USER}/connections/confirm"
+TOOL_URL = "/v1/integration-tools/acme-http"
+BASE = f"/v1/client/users/{USER}/connections/confirm"
 
 TOOL_DEFINITION = {
     "name": "Acme HTTP",
@@ -86,13 +86,13 @@ async def setup(
     assert tool.status_code == 200, tool.text
     portal = await create_client(client, super_admin_headers)
     config = await client.put(
-        f"/api/v1/clients/{portal['id']}/integrations/confirm",
+        f"/v1/clients/{portal['id']}/integrations/confirm",
         json={"tool_code": "acme-http"},
         headers=super_admin_headers,
     )
     assert config.status_code == 200, config.text
     credentials = await client.put(
-        f"/api/v1/clients/{portal['id']}/tools/acme-http/credentials",
+        f"/v1/clients/{portal['id']}/tools/acme-http/credentials",
         json={"credentials": {"api_token": API_TOKEN}},
         headers=super_admin_headers,
     )
@@ -126,7 +126,7 @@ async def test_tool_definition_describes_http_operations(
     client: AsyncClient, setup: dict
 ) -> None:
     response = await client.get(
-        "/api/v1/client/integration-tools", headers=setup["key"]
+        "/v1/client/integration-tools", headers=setup["key"]
     )
 
     connector = response.json()["items"][0]["connector"]
@@ -216,7 +216,7 @@ async def test_missing_credentials_are_reported_as_conflict(
 ) -> None:
     await save_inputs(client, setup)
     await client.delete(
-        f"/api/v1/clients/{setup['client_id']}/tools/acme-http/credentials",
+        f"/v1/clients/{setup['client_id']}/tools/acme-http/credentials",
         headers=setup["admin"],
     )
 
@@ -278,7 +278,7 @@ async def test_credentials_never_leave_the_secret_store(
 ) -> None:
     caplog.set_level(logging.DEBUG)
     credentials_url = (
-        f"/api/v1/clients/{setup['client_id']}/tools/acme-http/credentials"
+        f"/v1/clients/{setup['client_id']}/tools/acme-http/credentials"
     )
 
     shown = await client.get(credentials_url, headers=setup["admin"])

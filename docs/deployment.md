@@ -20,7 +20,7 @@ flowchart LR
 
 | Public URL | Reaches |
 |------------|---------|
-| `https://api-evrc.viitorcloud.in/integration/api/v1/...` | The API |
+| `https://api-evrc.viitorcloud.in/integration/v1/...` | The API |
 | `https://api-evrc.viitorcloud.in/integration/health/live` | Liveness |
 | `https://api-evrc.viitorcloud.in/integration/health/ready` | Readiness (checks MySQL) |
 | `https://api-evrc.viitorcloud.in/integration/docs`, `/redoc` | Only if `ENABLE_DOCS=true` and not production |
@@ -233,7 +233,7 @@ together if the mount point ever changes.
 Once, with the bootstrap token from `.env`:
 
 ```bash
-curl -X POST https://api-evrc.viitorcloud.in/integration/api/v1/super-admins/register \
+curl -X POST https://api-evrc.viitorcloud.in/integration/v1/super-admins/register \
   -H "Content-Type: application/json" \
   -H "X-Bootstrap-Token: <SUPER_ADMIN_BOOTSTRAP_TOKEN>" \
   -d '{"email": "admin@example.com", "full_name": "Platform Admin", "password": "<12+ characters>"}'

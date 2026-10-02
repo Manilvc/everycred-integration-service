@@ -8,8 +8,8 @@ from app.connectors.registry import ConnectorRegistry
 from app.features.integration_tools.models import IntegrationTool
 from app.features.integration_types.models import IntegrationType
 
-TOOLS_URL = "/api/v1/integration-tools"
-CLIENT_TOOLS_URL = "/api/v1/client/integration-tools"
+TOOLS_URL = "/v1/integration-tools"
+CLIENT_TOOLS_URL = "/v1/client/integration-tools"
 
 
 class AcmeConnector(IntegrationConnector):

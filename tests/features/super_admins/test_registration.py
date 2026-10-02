@@ -3,8 +3,8 @@ from httpx import AsyncClient
 
 from tests.conftest import BOOTSTRAP_TOKEN
 
-REGISTER_URL = "/api/v1/super-admins/register"
-LOGIN_URL = "/api/v1/super-admins/login"
+REGISTER_URL = "/v1/super-admins/register"
+LOGIN_URL = "/v1/super-admins/login"
 
 FIRST_ADMIN = {
     "email": "First.Admin@Example.com",

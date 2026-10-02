@@ -20,7 +20,7 @@ their users to integration tools.
 The API has two kinds of callers, each with its own credential.
 
 - **Super admins** send the access token from
-  `POST /api/v1/super-admins/login` as `Authorization: Bearer <token>`.
+  `POST /v1/super-admins/login` as `Authorization: Bearer <token>`.
 - **Client projects** send the API key a super admin issued them as
   `X-API-Key: <key>`.
 

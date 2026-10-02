@@ -64,7 +64,7 @@ If your account needs the customer id header, add it next to
 Save it (super admin token):
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/integration-tools/surepass \
+curl -X PUT http://localhost:8000/v1/integration-tools/surepass \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   --data @docs/examples/surepass-tool.json
@@ -79,7 +79,7 @@ Change `integration_types` to every type SurePass serves for you.
 ## 2. Store each client's SurePass credentials
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/clients/<client_id>/tools/surepass/credentials \
+curl -X PUT http://localhost:8000/v1/clients/<client_id>/tools/surepass/credentials \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   -d '{"credentials": {"api_token": "<SurePass token>"}}'
@@ -93,7 +93,7 @@ the same endpoint again to rotate it.
 ## 3. Choose SurePass for the client
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/clients/<client_id>/integrations/confirm \
+curl -X PUT http://localhost:8000/v1/clients/<client_id>/integrations/confirm \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
   -d '{"is_enabled": true, "tool_code": "surepass", "settings": {"environment": "sandbox"}}'
@@ -101,7 +101,7 @@ curl -X PUT http://localhost:8000/api/v1/clients/<client_id>/integrations/confir
 
 `settings.environment` picks `sandbox` or `production` from the tool's
 `environments`. Clients can change it with
-`PUT /api/v1/client/integrations/confirm/settings`, but only to a name
+`PUT /v1/client/integrations/confirm/settings`, but only to a name
 the tool defines, never to a URL.
 
 ## 4. Your backend: connect a user and run operations
@@ -111,7 +111,7 @@ All calls use the client's `X-API-Key`.
 Save inputs that stay the same for the user (optional):
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/client/users/<user_uuid>/connections/confirm \
+curl -X PUT http://localhost:8000/v1/client/users/<user_uuid>/connections/confirm \
   -H "X-API-Key: <client key>" -H "Content-Type: application/json" \
   -d '{"kwargs": {}}'
 ```
@@ -119,7 +119,7 @@ curl -X PUT http://localhost:8000/api/v1/client/users/<user_uuid>/connections/co
 Run an operation:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/client/users/<user_uuid>/connections/confirm/operations/verify_document \
+curl -X POST http://localhost:8000/v1/client/users/<user_uuid>/connections/confirm/operations/verify_document \
   -H "X-API-Key: <client key>" -H "Content-Type: application/json" \
   -d '{"kwargs": {"id_number": "<document number>"}}'
 ```
@@ -136,7 +136,7 @@ curl -X POST http://localhost:8000/api/v1/client/users/<user_uuid>/connections/c
 }
 ```
 
-`GET /api/v1/client/integration-tools` lists each operation with the
+`GET /v1/client/integration-tools` lists each operation with the
 `kwargs` it needs, so your backend can build requests without
 hard-coding them.
 

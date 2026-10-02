@@ -23,7 +23,7 @@ async def set_config(
     **body: object,
 ):
     return await client.put(
-        f"/api/v1/clients/{client_id}/integrations/{type_code}",
+        f"/v1/clients/{client_id}/integrations/{type_code}",
         json=body,
         headers=headers,
     )
@@ -120,7 +120,7 @@ async def test_client_configuration_shows_chosen_tool(
     )
 
     response = await client.get(
-        "/api/v1/client/configuration", headers=portal["headers"]
+        "/v1/client/configuration", headers=portal["headers"]
     )
 
     integration = response.json()["integrations"][0]
@@ -140,7 +140,7 @@ async def test_client_updates_its_own_settings(
     )
 
     response = await client.put(
-        "/api/v1/client/integrations/confirm/settings",
+        "/v1/client/integrations/confirm/settings",
         json={"settings": {"callback_url": "https://portal.example.com"}},
         headers=portal["headers"],
     )
@@ -152,7 +152,7 @@ async def test_client_updates_its_own_settings(
     assert body["integration_tool"]["code"] == "acme-verify"
     assert body["is_enabled"] is True
     admin_view = await client.get(
-        f"/api/v1/clients/{portal['id']}/integrations",
+        f"/v1/clients/{portal['id']}/integrations",
         headers=super_admin_headers,
     )
     assert admin_view.json()[0]["settings"] == body["settings"]
@@ -170,7 +170,7 @@ async def test_client_cannot_change_enablement_or_tool(
     await set_config(client, super_admin_headers, portal["id"], "gather")
 
     response = await client.put(
-        "/api/v1/client/integrations/gather/settings",
+        "/v1/client/integrations/gather/settings",
         json={"settings": {}, **extra_field},
         headers=portal["headers"],
     )
@@ -186,17 +186,17 @@ async def test_client_cannot_edit_settings_of_type_not_enabled(
     )
 
     disabled = await client.put(
-        "/api/v1/client/integrations/gather/settings",
+        "/v1/client/integrations/gather/settings",
         json={"settings": {}},
         headers=portal["headers"],
     )
     never_configured = await client.put(
-        "/api/v1/client/integrations/records/settings",
+        "/v1/client/integrations/records/settings",
         json={"settings": {}},
         headers=portal["headers"],
     )
     unknown = await client.put(
-        "/api/v1/client/integrations/nope/settings",
+        "/v1/client/integrations/nope/settings",
         json={"settings": {}},
         headers=portal["headers"],
     )
@@ -211,7 +211,7 @@ async def test_client_settings_update_requires_api_key(
     client: AsyncClient,
 ) -> None:
     response = await client.put(
-        "/api/v1/client/integrations/confirm/settings",
+        "/v1/client/integrations/confirm/settings",
         json={"settings": {}},
     )
 
@@ -224,7 +224,7 @@ async def test_client_settings_size_is_limited(
     await set_config(client, super_admin_headers, portal["id"], "confirm")
 
     response = await client.put(
-        "/api/v1/client/integrations/confirm/settings",
+        "/v1/client/integrations/confirm/settings",
         json={"settings": {"blob": "x" * 20_000}},
         headers=portal["headers"],
     )

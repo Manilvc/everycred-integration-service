@@ -17,11 +17,11 @@ existing super admin.
 
 | Method | Path                            | Summary                     | Auth                                  |
 |--------|---------------------------------|-----------------------------|---------------------------------------|
-| POST   | `/api/v1/super-admins/register` | Register a super admin      | Super admin token, or bootstrap token for the first account |
-| POST   | `/api/v1/super-admins/login`    | Log in                      | None                                  |
-| GET    | `/api/v1/super-admins/me`       | Current super admin profile | Super admin token                     |
+| POST   | `/v1/super-admins/register` | Register a super admin      | Super admin token, or bootstrap token for the first account |
+| POST   | `/v1/super-admins/login`    | Log in                      | None                                  |
+| GET    | `/v1/super-admins/me`       | Current super admin profile | Super admin token                     |
 
-### `POST /api/v1/super-admins/register`
+### `POST /v1/super-admins/register`
 
 Request:
 
@@ -61,7 +61,7 @@ Errors:
 | 409    | `super_admin_already_exists` | Email already registered                           |
 | 422    | `validation_error`           | Invalid email, short password, blank name, unknown field |
 
-### `POST /api/v1/super-admins/login`
+### `POST /v1/super-admins/login`
 
 Request: `{"email": "...", "password": "..."}`
 
@@ -79,7 +79,7 @@ Response `200 OK` (sent with `Cache-Control: no-store`):
 Every failure returns `401 invalid_credentials` with the message
 "Invalid email or password.", whatever the reason.
 
-### `GET /api/v1/super-admins/me`
+### `GET /v1/super-admins/me`
 
 Send `Authorization: Bearer <access_token>`. Returns the same shape as
 the registration response.
@@ -91,7 +91,7 @@ the registration response.
 2. Call register with the token in a header:
 
    ```bash
-   curl -X POST http://localhost:8000/api/v1/super-admins/register \
+   curl -X POST http://localhost:8000/v1/super-admins/register \
      -H "Content-Type: application/json" \
      -H "X-Bootstrap-Token: <token from .env>" \
      -d '{"email": "admin@example.com", "full_name": "Platform Admin", "password": "<a long passphrase>"}'

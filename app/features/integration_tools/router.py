@@ -101,7 +101,7 @@ async def upsert_integration_tool(
     is validated before saving: HTTPS base URLs, relative operation
     paths, known placeholders, and credentials only through
     `{credentials.<name>}`. Set the credentials themselves per client
-    with `PUT /api/v1/clients/{client_id}/tools/{tool_code}/credentials`.
+    with `PUT /v1/clients/{client_id}/tools/{tool_code}/credentials`.
     """
     return await service.upsert_tool(tool_code, definition)
 

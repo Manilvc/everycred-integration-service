@@ -8,9 +8,9 @@ from app.core.config import get_settings
 from app.core.security import TOKEN_AUDIENCE, create_access_token
 from tests.conftest import BOOTSTRAP_TOKEN
 
-REGISTER_URL = "/api/v1/super-admins/register"
-LOGIN_URL = "/api/v1/super-admins/login"
-ME_URL = "/api/v1/super-admins/me"
+REGISTER_URL = "/v1/super-admins/register"
+LOGIN_URL = "/v1/super-admins/login"
+ME_URL = "/v1/super-admins/me"
 
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASSWORD = "correct horse battery staple"

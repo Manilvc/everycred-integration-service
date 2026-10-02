@@ -11,7 +11,7 @@ There are two ways to give a tool a connector:
 | | Configuration (`connector_config`) | Python code |
 |--|------------------------------------|-------------|
 | Best for | REST/JSON providers such as SurePass | Providers needing custom logic (signing, polling, multi-step flows) |
-| Adding one | `PUT /api/v1/integration-tools/{tool_code}` | A module in `app/connectors/` and a deploy |
+| Adding one | `PUT /v1/integration-tools/{tool_code}` | A module in `app/connectors/` and a deploy |
 | Operations | Declared in the configuration | Override `run_operation` |
 
 A registered Python connector wins over a configuration for the same
