@@ -18,6 +18,7 @@ The API is for super admins only.
 | Method | Path                       | Summary                 | Auth              |
 |--------|----------------------------|-------------------------|-------------------|
 | GET    | `/v1/integration-types` | List integration types | Super admin token |
+| GET    | `/v1/client/integration-types` | List integration types for a client's backend | Client `X-API-Key` |
 
 ### `GET /v1/integration-types`
 
@@ -73,6 +74,33 @@ Errors:
 | 401    | `authentication_failed` | No token, or an invalid/expired token  |
 | 403    | `permission_denied`     | Token belongs to a role other than super admin |
 | 422    | `validation_error`      | `limit`/`offset` out of range, unknown `direction`, unknown parameter |
+
+### `GET /v1/client/integration-types`
+
+For a client's backend, with its `X-API-Key`. Returns the active types
+only, in display order, with the same `direction` filter (`all` by
+default, `inbound`, `outbound`) plus `limit` and `offset`. Each item
+also has `is_enabled`: whether a super admin enabled the type for this
+client.
+
+```bash
+curl "http://localhost:8000/v1/client/integration-types?direction=inbound" \
+  -H "X-API-Key: <client api key>"
+```
+
+```json
+{
+  "items": [
+    {"code": "confirm", "name": "Confirm", "direction": "inbound", "is_enabled": true, "...": "..."},
+    {"code": "gather", "name": "Gather", "direction": "inbound", "is_enabled": false, "...": "..."},
+    {"code": "declare", "name": "Declare", "direction": "inbound", "is_enabled": false, "...": "..."}
+  ],
+  "total": 3, "limit": 20, "offset": 0
+}
+```
+
+`include_inactive` is not accepted here (`422`). A super admin token is
+not an API key and gets `401`.
 
 ## Adding a type
 

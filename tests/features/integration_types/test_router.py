@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.features.integration_types.models import IntegrationType
+from tests.features.clients.conftest import create_client, issue_api_key
 
 LIST_URL = "/v1/integration-types"
 
@@ -230,6 +231,95 @@ async def test_unknown_direction_is_rejected(
 ) -> None:
     response = await client.get(
         LIST_URL, params={"direction": "sideways"}, headers=super_admin_headers
+    )
+
+    assert response.status_code == 422
+
+
+CLIENT_LIST_URL = "/v1/client/integration-types"
+
+
+@pytest.fixture
+async def client_key(
+    client: AsyncClient,
+    super_admin_headers: dict[str, str],
+    seeded_types: None,
+) -> dict[str, str]:
+    """API key headers for a client with only "gather" enabled."""
+    portal = await create_client(client, super_admin_headers)
+    enabled = await client.put(
+        f"/v1/clients/{portal['id']}/integrations/gather",
+        json={"tool_code": None},
+        headers=super_admin_headers,
+    )
+    assert enabled.status_code == 200, enabled.text
+    issued = await issue_api_key(client, super_admin_headers, portal["id"])
+    return {"X-API-Key": issued["api_key"]}
+
+
+async def test_client_lists_types_with_its_api_key(
+    client: AsyncClient, client_key: dict[str, str]
+) -> None:
+    response = await client.get(CLIENT_LIST_URL, headers=client_key)
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    # Every active type, in display order; inactive "legacy" is hidden.
+    assert [item["code"] for item in items] == [
+        "confirm",
+        "gather",
+        "enforcement",
+        "records",
+    ]
+    assert {item["code"]: item["is_enabled"] for item in items} == {
+        "confirm": False,
+        "gather": True,
+        "enforcement": False,
+        "records": False,
+    }
+    assert items[0]["direction"] == "inbound"
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected"),
+    [
+        ("inbound", ["confirm", "gather"]),
+        ("outbound", ["enforcement", "records"]),
+        ("all", ["confirm", "gather", "enforcement", "records"]),
+    ],
+)
+async def test_client_listing_filters_by_direction(
+    client: AsyncClient,
+    client_key: dict[str, str],
+    direction: str,
+    expected: list[str],
+) -> None:
+    response = await client.get(
+        CLIENT_LIST_URL, params={"direction": direction}, headers=client_key
+    )
+
+    assert [item["code"] for item in response.json()["items"]] == expected
+
+
+async def test_client_listing_requires_an_api_key(
+    client: AsyncClient, super_admin_headers: dict[str, str]
+) -> None:
+    anonymous = await client.get(CLIENT_LIST_URL)
+    with_admin_token = await client.get(
+        CLIENT_LIST_URL, headers=super_admin_headers
+    )
+
+    assert anonymous.status_code == 401
+    assert with_admin_token.status_code == 401
+
+
+async def test_client_listing_does_not_offer_inactive_types(
+    client: AsyncClient, client_key: dict[str, str]
+) -> None:
+    response = await client.get(
+        CLIENT_LIST_URL,
+        params={"include_inactive": "true"},
+        headers=client_key,
     )
 
     assert response.status_code == 422

@@ -30,7 +30,17 @@ class IntegrationTypeFilters(PaginationParams):
     )
 
 
+class ClientIntegrationTypeFilters(PaginationParams):
+    """Query parameters for a client's integration type listing."""
+
+    direction: DirectionFilter = Field(
+        default=DirectionFilter.ALL,
+        description="`inbound`, `outbound`, or `all` (the default).",
+    )
+
+
 IntegrationTypeQuery = Annotated[IntegrationTypeFilters, Query()]
+ClientIntegrationTypeQuery = Annotated[ClientIntegrationTypeFilters, Query()]
 
 
 class IntegrationTypeResponse(BaseModel):
@@ -47,3 +57,13 @@ class IntegrationTypeResponse(BaseModel):
     direction: IntegrationDirection
     created_at: datetime
     updated_at: datetime
+
+
+class ClientIntegrationTypeResponse(IntegrationTypeResponse):
+    """An integration type as a client sees it.
+
+    Attributes:
+        is_enabled: A super admin has enabled the type for this client.
+    """
+
+    is_enabled: bool
