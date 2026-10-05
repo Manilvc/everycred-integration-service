@@ -12,6 +12,7 @@ place where they are mounted under ``/v1``. To add a feature::
 
 from fastapi import APIRouter, status
 
+from app.features.catalog.router import router as client_catalog_router
 from app.features.client_integrations.router import (
     router as client_integrations_router,
 )
@@ -64,6 +65,7 @@ api_v1_router.include_router(client_tool_fields_router)
 api_v1_router.include_router(client_self_service_router)
 api_v1_router.include_router(client_integration_tools_router)
 api_v1_router.include_router(client_integrations_router)
+api_v1_router.include_router(client_catalog_router)
 api_v1_router.include_router(user_integrations_router)
 api_v1_router.include_router(user_connections_router)
 api_v1_router.include_router(sessions_router)

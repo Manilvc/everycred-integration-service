@@ -136,6 +136,17 @@ OPENAPI_TAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "Client Catalog",
+        "description": (
+            "Resolve integration type, tool, and field ids that the "
+            "client stored as references back into their names and "
+            "field keys, many at once. Ids that no longer match, such "
+            "as a removed field, are listed in `not_found` instead of "
+            "failing the call. Called with the client's `X-API-Key`; "
+            "only global fields and the client's own resolve."
+        ),
+    },
+    {
         "name": "User Connections",
         "description": (
             "Connect a client's users to its enabled integrations. Save "
@@ -200,6 +211,7 @@ TAG_GROUPS: list[dict[str, Any]] = [
         "tags": [
             "Client Self-Service",
             "Client Integrations",
+            "Client Catalog",
             "User Connections",
             "Sessions",
             "Webhooks",

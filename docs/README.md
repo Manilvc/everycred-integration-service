@@ -110,6 +110,7 @@ Core modules:
 
 Features:
 
+- [catalog (resolving stored ids)](features/catalog.md)
 - [client_integrations](features/client_integrations.md)
 - [clients](features/clients.md)
 - [health](features/health.md)

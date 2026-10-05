@@ -1,6 +1,7 @@
 """Database access for integration types."""
 
-from collections.abc import Sequence
+import uuid
+from collections.abc import Collection, Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,17 @@ class IntegrationTypeRepository:
         """Return the types whose codes are in ``codes``."""
         integration_types = await self.session.scalars(
             select(IntegrationType).where(IntegrationType.code.in_(codes))
+        )
+        return integration_types.all()
+
+    async def get_by_ids(
+        self, ids: Collection[uuid.UUID]
+    ) -> Sequence[IntegrationType]:
+        """Return the types whose ids are in ``ids``, active or not."""
+        if not ids:
+            return []
+        integration_types = await self.session.scalars(
+            select(IntegrationType).where(IntegrationType.id.in_(list(ids)))
         )
         return integration_types.all()
 

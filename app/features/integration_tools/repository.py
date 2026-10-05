@@ -26,6 +26,17 @@ class IntegrationToolRepository:
             select(IntegrationTool).where(IntegrationTool.code == code)
         )
 
+    async def get_by_ids(
+        self, ids: Collection[uuid.UUID]
+    ) -> Sequence[IntegrationTool]:
+        """Return the tools whose ids are in ``ids``, active or not."""
+        if not ids:
+            return []
+        tools = await self.session.scalars(
+            select(IntegrationTool).where(IntegrationTool.id.in_(list(ids)))
+        )
+        return tools.all()
+
     async def list_active_for_types(
         self, integration_type_ids: Collection[uuid.UUID]
     ) -> Sequence[IntegrationTool]:
@@ -153,6 +164,29 @@ class IntegrationToolFieldRepository:
             .offset(offset)
         )
         return fields.all(), total or 0
+
+    async def get_by_ids(
+        self,
+        ids: Collection[uuid.UUID],
+        *,
+        client_ids: Collection[uuid.UUID | None],
+    ) -> Sequence[IntegrationToolField]:
+        """Return the fields whose ids are in ``ids`` within the scopes.
+
+        Args:
+            ids: Field ids to look up.
+            client_ids: Scopes to include; ``None`` stands for the
+                global fields, a client id for that client's own.
+        """
+        if not ids:
+            return []
+        fields = await self.session.scalars(
+            select(IntegrationToolField).where(
+                IntegrationToolField.id.in_(list(ids)),
+                self._in_scopes(client_ids),
+            )
+        )
+        return fields.all()
 
     async def replace(
         self,
