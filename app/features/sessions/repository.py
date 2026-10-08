@@ -8,7 +8,12 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.integration_types.models import IntegrationType
-from app.features.sessions.models import ACTIVE_STATUSES, IntegrationSession
+from app.features.sessions.models import (
+    ACTIVE_STATUSES,
+    IntegrationSession,
+    SessionOutcome,
+    SessionStatus,
+)
 
 
 class SessionRepository:
@@ -97,6 +102,83 @@ class SessionRepository:
             .offset(offset)
         )
         return sessions.all(), total or 0
+
+    async def verified_users_page(
+        self,
+        client_id: uuid.UUID,
+        *,
+        integration_type_code: str | None,
+        flow: str | None,
+        verified_after: datetime | None,
+        user_uuid: uuid.UUID | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[Sequence[IntegrationSession], int]:
+        """Return each verified user's latest verified session, newest first.
+
+        One row per user: the user's most recent session that completed
+        with outcome ``verified``. ``total`` counts users, not sessions.
+        """
+        filters = [
+            IntegrationSession.client_id == client_id,
+            IntegrationSession.status == SessionStatus.COMPLETED,
+            IntegrationSession.outcome == SessionOutcome.VERIFIED,
+        ]
+        if integration_type_code is not None:
+            filters.append(
+                IntegrationSession.integration_type.has(
+                    IntegrationType.code == integration_type_code
+                )
+            )
+        if flow is not None:
+            filters.append(IntegrationSession.flow == flow)
+        if verified_after is not None:
+            filters.append(IntegrationSession.completed_at >= verified_after)
+        if user_uuid is not None:
+            filters.append(IntegrationSession.user_uuid == user_uuid)
+
+        latest = (
+            select(
+                IntegrationSession.user_uuid.label("user_uuid"),
+                func.max(IntegrationSession.completed_at).label("verified_at"),
+            )
+            .where(*filters)
+            .group_by(IntegrationSession.user_uuid)
+            .subquery()
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(latest)
+        )
+        page = (
+            await self.session.execute(
+                select(latest.c.user_uuid, latest.c.verified_at)
+                .order_by(latest.c.verified_at.desc(), latest.c.user_uuid)
+                .limit(limit)
+                .offset(offset)
+            )
+        ).all()
+        if not page:
+            return [], total or 0
+
+        # The page's users with their latest time; two sessions of one
+        # user completing in the same instant are resolved by id.
+        latest_time_by_user = {row.user_uuid: row.verified_at for row in page}
+        candidates = await self.session.scalars(
+            select(IntegrationSession)
+            .where(
+                *filters,
+                IntegrationSession.user_uuid.in_(list(latest_time_by_user)),
+            )
+            .order_by(IntegrationSession.id)
+        )
+        session_by_user: dict[uuid.UUID, IntegrationSession] = {}
+        for candidate in candidates:
+            if (
+                candidate.completed_at
+                == latest_time_by_user[candidate.user_uuid]
+            ):
+                session_by_user.setdefault(candidate.user_uuid, candidate)
+        return [session_by_user[row.user_uuid] for row in page], total or 0
 
     async def active_past_expiry(
         self, now: datetime, limit: int

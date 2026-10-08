@@ -21,6 +21,8 @@ from app.features.sessions.schemas import (
     SessionQuery,
     SessionResponse,
     SessionResultResponse,
+    VerifiedUserQuery,
+    VerifiedUserResponse,
 )
 from app.shared.schemas import ErrorResponse, Page
 
@@ -166,3 +168,24 @@ async def cancel_session(
 ) -> SessionResponse:
     """Stop the session and discard the inputs collected so far."""
     return await service.cancel(current_client, session_id)
+
+
+@router.get(
+    "/kyc/verified-users",
+    response_model=Page[VerifiedUserResponse],
+    summary="List users whose KYC succeeded",
+)
+async def list_verified_users(
+    filters: VerifiedUserQuery,
+    current_client: CurrentClient,
+    service: SessionServiceDep,
+) -> Page[VerifiedUserResponse]:
+    """Return your users whose identity verification succeeded.
+
+    One item per user: their most recent session that completed with
+    outcome `verified`, newest first. `total` counts users. Filter by
+    `integration_type`, `flow`, `verified_after`, or a single
+    `user_uuid`; without filters, every verified user is returned.
+    Contains ids only; read a session's `/result` for its attributes.
+    """
+    return await service.list_verified_users(current_client, filters)

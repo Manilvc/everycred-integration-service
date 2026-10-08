@@ -1,7 +1,7 @@
 # Sessions (Confirm and Gather)
 
 > Package: `app/features/sessions/` (worker in `app/worker.py`)
-> Last updated: 2026-10-02
+> Last updated: 2026-10-08
 
 ## Overview
 
@@ -59,6 +59,7 @@ client can only reach its own sessions (others return `404`).
 | POST | `/v1/client/sessions/{id}/inputs` | Submit what the session is waiting for |
 | GET  | `/v1/client/sessions/{id}/result` | Read the attributes |
 | POST | `/v1/client/sessions/{id}/cancel` | Cancel and discard inputs |
+| GET  | `/v1/client/kyc/verified-users` | Users whose KYC succeeded (`integration_type`, `flow`, `verified_after`, `user_uuid`, `limit`, `offset`) |
 
 ### Start
 
@@ -118,6 +119,39 @@ curl -X POST https://<host>/integration/v1/client/sessions/<id>/inputs \
 
 `attributes` is empty when `not_verified`. After `data_expires_at`
 the endpoint returns `410 result_expired`.
+
+## Users whose KYC succeeded
+
+`GET /v1/client/kyc/verified-users` lists the client's users with at
+least one session that completed with outcome `verified`, one item per
+user, newest verification first. `total` counts users.
+
+```json
+{
+  "items": [
+    {
+      "user_uuid": "387914dd-4a4e-4aad-8d18-2ce9b7d827ef",
+      "verified_at": "2026-10-08T09:30:00Z",
+      "session_id": "0b8e…",
+      "integration_type": "confirm",
+      "tool_code": "surepass",
+      "flow": "aadhaar_otp"
+    }
+  ],
+  "total": 1, "limit": 20, "offset": 0
+}
+```
+
+- Each user appears once, with their most recent successful
+  verification; read that session's `/result` for its attributes while
+  they are kept.
+- Filters (all optional, combinable): `integration_type`, `flow`,
+  `verified_after` (ISO 8601; without a timezone it is read as UTC),
+  and `user_uuid` to check one user. Without filters, every verified
+  user is returned.
+- `not_verified`, failed, expired, cancelled, unfinished, and gather
+  sessions do not count.
+- Ids only; no personal data.
 
 ## Lifecycle
 
