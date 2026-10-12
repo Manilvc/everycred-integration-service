@@ -14,6 +14,9 @@ from app.features.integration_tools.models import IntegrationTool
 from app.features.integration_types.models import IntegrationType
 
 FAILURE_MESSAGE_MAX_LENGTH = 500
+CONSENT_PURPOSE_MAX_LENGTH = 500
+CONSENT_NOTICE_VERSION_MAX_LENGTH = 64
+CONSENT_REFERENCE_MAX_LENGTH = 128
 
 
 class SessionPurpose(StrEnum):
@@ -32,6 +35,7 @@ class SessionStatus(StrEnum):
     """
 
     AWAITING_INPUT = "awaiting_input"
+    AWAITING_REDIRECT = "awaiting_redirect"
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -39,7 +43,11 @@ class SessionStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-ACTIVE_STATUSES = (SessionStatus.AWAITING_INPUT, SessionStatus.PROCESSING)
+ACTIVE_STATUSES = (
+    SessionStatus.AWAITING_INPUT,
+    SessionStatus.AWAITING_REDIRECT,
+    SessionStatus.PROCESSING,
+)
 
 
 class SessionOutcome(StrEnum):
@@ -58,6 +66,10 @@ class IntegrationSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     secret store only while the session is active, and results only
     until ``data_expires_at``.
 
+    The ``consent_*`` columns are the record of the holder's consent
+    the client relayed (DPDP Act 2023, section 6): what it was for,
+    which notice they saw, and when. They hold no personal data.
+
     Attributes:
         client_id: Client project the user belongs to.
         user_uuid: The client's id for the user.
@@ -74,6 +86,19 @@ class IntegrationSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             while the session is active.
         result_secret_reference: Returned attributes, until purged.
         result_attributes: Names of the returned attributes.
+        result_fields: Ids of the tool fields the result holds.
+        requested_attributes: Outputs the client asked to keep, or
+            None for all of them.
+        requested_fields: Tool fields the client asked for, as
+            ``{"id", "key"}`` pairs, or None.
+        oauth_state_hash: SHA-256 of the pending sign-in's ``state``,
+            while ``awaiting_redirect``; cleared once used.
+        consent_purpose: Purpose shown to the holder.
+        consent_notice_version: Version of the notice they accepted.
+        consent_language: Language the notice was shown in.
+        consented_at: When the holder gave consent.
+        consent_reference: The client's own consent record id.
+        consent_withdrawn_at: When the holder withdrew consent.
         failure_code: Machine-readable reason for failure.
         failure_message: Safe, human-readable reason.
         expires_at: An unfinished session expires at this time.
@@ -91,6 +116,11 @@ class IntegrationSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         Index("ix_integration_sessions_status_expiry", "status", "expires_at"),
         Index("ix_integration_sessions_data_expiry", "data_expires_at"),
+        Index(
+            "ix_integration_sessions_client_oauth_state",
+            "client_id",
+            "oauth_state_hash",
+        ),
     )
 
     client_id: Mapped[uuid.UUID] = mapped_column(
@@ -141,6 +171,26 @@ class IntegrationSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     result_attributes: Mapped[list[str]] = mapped_column(
         JSON, default=list, nullable=False
     )
+    result_fields: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    requested_attributes: Mapped[list[str] | None] = mapped_column(JSON)
+    requested_fields: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
+    oauth_state_hash: Mapped[str | None] = mapped_column(String(64))
+    # Nullable only because sessions started before consent was
+    # recorded exist; every new session sets them.
+    consent_purpose: Mapped[str | None] = mapped_column(
+        String(CONSENT_PURPOSE_MAX_LENGTH)
+    )
+    consent_notice_version: Mapped[str | None] = mapped_column(
+        String(CONSENT_NOTICE_VERSION_MAX_LENGTH)
+    )
+    consent_language: Mapped[str | None] = mapped_column(String(16))
+    consented_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    consent_reference: Mapped[str | None] = mapped_column(
+        String(CONSENT_REFERENCE_MAX_LENGTH)
+    )
+    consent_withdrawn_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     failure_code: Mapped[str | None] = mapped_column(String(100))
     failure_message: Mapped[str | None] = mapped_column(
         String(FAILURE_MESSAGE_MAX_LENGTH)

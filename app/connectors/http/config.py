@@ -264,6 +264,168 @@ class FlowCondition(BaseModel):
     one_of: list[Any] | None = Field(default=None, max_length=50)
 
 
+class FlowInputSpec(BaseModel):
+    """How a holder-facing screen should ask for one flow input.
+
+    The client renders its form from these, so a new verification
+    method needs no app release. The service also enforces ``pattern``
+    and the length bounds before any provider is called.
+
+    Attributes:
+        label: Field label, e.g. "Aadhaar number".
+        input_type: Keyboard and widget hint for the screen.
+        pattern: Full-match regular expression the value must satisfy.
+        min_length: Shortest accepted value.
+        max_length: Longest accepted value.
+        is_masked: Hide the value while typing, and when shown back.
+        hint: Placeholder or helper text.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=100)
+    input_type: Literal["text", "number", "otp", "date", "email", "phone"] = (
+        "text"
+    )
+    pattern: str | None = Field(default=None, max_length=200)
+    min_length: int | None = Field(default=None, ge=0, le=1000)
+    max_length: int | None = Field(default=None, ge=1, le=1000)
+    is_masked: bool = False
+    hint: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def check_bounds(self) -> "FlowInputSpec":
+        """Reject a pattern that does not compile and inverted bounds."""
+        if self.pattern is not None:
+            try:
+                re.compile(self.pattern)
+            except re.error as exc:
+                raise ValueError(f"pattern is not valid: {exc}") from exc
+        if (
+            self.min_length is not None
+            and self.max_length is not None
+            and self.min_length > self.max_length
+        ):
+            raise ValueError("min_length must not exceed max_length")
+        return self
+
+
+class OAuth2AuthorizationCode(BaseModel):
+    """OpenID Connect sign-in that opens a flow (authorization code + PKCE).
+
+    Used by redirect-based identity providers such as Microsoft Entra ID.
+    The session returns an authorization URL for the holder's browser,
+    pauses as ``awaiting_redirect``, and resumes when the client relays
+    the provider's ``code`` and ``state``. The code is exchanged here
+    with the PKCE verifier, and the ID token's claims become the data
+    later steps and ``outputs`` read. Access and refresh tokens are
+    discarded immediately; nothing is kept beyond the claims.
+
+    Attributes:
+        authorize_url: Authorization endpoint. Fixed host; the path may
+            use ``{credentials.*}`` or ``{settings.*}`` (an Entra tenant
+            id, say). It is shown to the holder's browser, so it must
+            never use the credential that holds the client secret.
+        token_url: Token endpoint, under the same rules.
+        client_id: Usually ``{credentials.client_id}``.
+        client_secret: Exactly one ``{credentials.*}`` placeholder.
+        scope: Must include ``openid`` so an ID token is returned.
+        issuer: Expected ``iss`` claim; strongly recommended.
+        client_auth: Send the secret in the form body or with HTTP Basic.
+        extra_params: Literal parameters added to the authorize URL,
+            e.g. ``{"prompt": "login"}`` to force a fresh sign-in.
+        capture: Session values to keep from the claims, as
+            ``name -> dot path``, for later steps.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["oauth2_authorization_code"] = "oauth2_authorization_code"
+    authorize_url: str = Field(max_length=500)
+    token_url: str = Field(max_length=500)
+    client_id: str = "{credentials.client_id}"
+    client_secret: str = "{credentials.client_secret}"  # noqa: S105 - placeholder
+    scope: str = Field(default="openid profile email", max_length=1000)
+    issuer: str | None = Field(default=None, max_length=500)
+    client_auth: Literal["body", "basic"] = "body"
+    extra_params: dict[str, str] = Field(default_factory=dict, max_length=10)
+    capture: dict[str, str] = Field(default_factory=dict, max_length=20)
+
+    @model_validator(mode="after")
+    def check_fields(self) -> "OAuth2AuthorizationCode":
+        """Keep endpoints fixed, the secret private, and OIDC switched on."""
+        _check_base_url(self.authorize_url, "authorize_url")
+        _check_base_url(self.token_url, "token_url")
+        if "openid" not in self.scope.split():
+            raise ValueError("scope must include 'openid'")
+        if not re.fullmatch(
+            r"\{credentials\.[A-Za-z0-9_]+\}", self.client_secret
+        ):
+            raise ValueError(
+                "client_secret must be exactly one {credentials.<name>} "
+                "placeholder"
+            )
+        try:
+            public_placeholders = find_placeholders(
+                [self.authorize_url, self.client_id, self.issuer or ""]
+            )
+            url_placeholders = find_placeholders(
+                [self.authorize_url, self.token_url, self.issuer or ""]
+            )
+            literal_placeholders = find_placeholders(self.extra_params)
+        except TemplateSyntaxError as exc:
+            raise ValueError(str(exc)) from exc
+        if not {_source_of(p) for p in url_placeholders} <= {
+            "credentials",
+            "settings",
+        }:
+            raise ValueError(
+                "authorization URLs may only use credentials or settings "
+                "placeholders"
+            )
+        # The authorize URL and client id travel through the holder's
+        # browser; the secret must never be one of the values they use.
+        if self.client_secret.strip("{}") in public_placeholders:
+            raise ValueError(
+                "the client secret may not appear in authorize_url, "
+                "client_id, or issuer"
+            )
+        if literal_placeholders:
+            raise ValueError("extra_params must be literal values")
+        reserved = {
+            "client_id",
+            "redirect_uri",
+            "response_type",
+            "scope",
+            "state",
+            "nonce",
+            "code_challenge",
+            "code_challenge_method",
+        } & set(self.extra_params)
+        if reserved:
+            raise ValueError(
+                f"extra_params may not set '{sorted(reserved)[0]}'"
+            )
+        for name, path in self.capture.items():
+            if not re.fullmatch(_INPUT_NAME_PATTERN, name):
+                raise ValueError(f"'{name}' must be lower_snake_case")
+            if not re.fullmatch(_DATA_PATH_PATTERN, path):
+                raise ValueError(f"capture path '{path}' is not a dot path")
+        return self
+
+    def placeholders(self) -> set[str]:
+        """Return every placeholder the sign-in and code exchange read."""
+        return find_placeholders(
+            [
+                self.authorize_url,
+                self.token_url,
+                self.client_id,
+                self.client_secret,
+                self.issuer or "",
+            ]
+        )
+
+
 class FlowConfig(BaseModel):
     """A named verification or data-gathering procedure.
 
@@ -271,7 +433,11 @@ class FlowConfig(BaseModel):
         purpose: ``verification`` (Confirm: is this really the person?)
             or ``gather`` (fetch attributes from a system of record).
         description: Shown to clients in the tool listing.
+        authorization: Optional sign-in with the provider before the
+            steps run. A flow with only an authorization and no steps
+            reads its outputs from the ID token claims.
         steps: Operations run in order; a step waits for its inputs.
+        input_specs: How to ask the holder for each input, by name.
         outputs: Attributes to return, as ``attribute -> dot path`` into
             the final step's data, or ``session.<name>`` for a captured
             value. Clients can override these per tool.
@@ -283,15 +449,31 @@ class FlowConfig(BaseModel):
 
     purpose: Literal["verification", "gather"]
     description: str | None = Field(default=None, max_length=500)
-    steps: list[FlowStep] = Field(min_length=1, max_length=10)
+    authorization: OAuth2AuthorizationCode | None = None
+    steps: list[FlowStep] = Field(default_factory=list, max_length=10)
+    input_specs: dict[str, FlowInputSpec] = Field(
+        default_factory=dict, max_length=20
+    )
     outputs: dict[str, str] = Field(default_factory=dict, max_length=100)
     verified_when: list[FlowCondition] = Field(
         default_factory=list, max_length=20
     )
 
+    @property
+    def kind(self) -> Literal["input", "redirect"]:
+        """``redirect`` when the holder signs in with the provider."""
+        return "redirect" if self.authorization else "input"
+
     @model_validator(mode="after")
     def check_outputs(self) -> "FlowConfig":
         """Validate output paths and purpose-specific rules."""
+        if not self.steps and self.authorization is None:
+            raise ValueError("a flow needs steps, an authorization, or both")
+        if unknown := set(self.input_specs) - set(self.all_inputs()):
+            raise ValueError(
+                "input_specs name inputs no step asks for: "
+                + ", ".join(sorted(unknown))
+            )
         for attribute, path in self.outputs.items():
             if not re.fullmatch(_INPUT_NAME_PATTERN, attribute):
                 raise ValueError(
@@ -460,7 +642,11 @@ class HttpConnectorConfig(BaseModel):
                     f"flow name '{flow_name}' must be lower_snake_case"
                 )
             declared_inputs: set[str] = set()
-            captured: set[str] = set()
+            captured: set[str] = (
+                set(flow.authorization.capture)
+                if flow.authorization
+                else set()
+            )
             for position, step in enumerate(flow.steps, start=1):
                 operation = self.operations.get(step.operation)
                 if operation is None:
@@ -523,6 +709,9 @@ class HttpConnectorConfig(BaseModel):
         placeholders = self.connection_placeholders()
         for operation in self.operations.values():
             placeholders |= operation.placeholders()
+        for flow in self.flows.values():
+            if flow.authorization is not None:
+                placeholders |= flow.authorization.placeholders()
         return sorted(
             placeholder.split(".", 1)[1]
             for placeholder in placeholders

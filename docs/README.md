@@ -1,6 +1,6 @@
 # Integration Service Documentation
 
-> Last updated: 2026-09-29
+> Last updated: 2026-10-05
 
 ## Layout
 
@@ -33,7 +33,7 @@ app/
     ├── health/          # Liveness and readiness probes
     ├── integration_tools/ # Tools that fulfil types; client tool listing
     ├── integration_types/ # Catalogue of integration types (DB-driven)
-    ├── sessions/        # Confirm (verification) and Gather sessions
+    ├── sessions/        # Confirm and Gather sessions, consent, sign-in
     ├── super_admins/    # Super admin registration, login, profile
     ├── user_connections/ # Per-user connections run through connectors
     └── webhooks/        # Client webhook endpoint and signed deliveries

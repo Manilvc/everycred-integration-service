@@ -1,6 +1,6 @@
 # Writing a Connector
 
-> Last updated: 2026-09-28
+> Last updated: 2026-10-05
 
 A connector is the code behind one integration tool (a row in
 `integration_tools`). It links one client user to that tool and is the
@@ -153,6 +153,83 @@ Checked when the tool is saved: every operation exists; every
 `{kwargs.x}` is declared as an input by that step or an earlier one;
 every `{session.x}` and `session.` output is captured by an earlier
 step; flows do not use `{args.N}`; headers never use `{session.*}`.
+
+#### Input specs
+
+`input_specs` tell a holder-facing screen how to ask for each input,
+and are enforced by the service before any provider is called:
+
+```json
+"input_specs": {
+  "id_number": {
+    "label": "Aadhaar number",
+    "input_type": "number",
+    "pattern": "[0-9]{12}",
+    "max_length": 12,
+    "is_masked": true
+  },
+  "otp": {"label": "OTP", "input_type": "otp", "pattern": "[0-9]{6}",
+          "min_length": 6, "max_length": 6}
+}
+```
+
+- `input_type`: `text`, `number`, `otp`, `date`, `email`, or `phone`.
+- `pattern` is matched against the whole value, after the length
+  bounds are checked. Keep it simple; it runs on every submission.
+- Keys must be inputs some step asks for. Inputs without a spec are
+  shown as plain text fields labelled with their name.
+
+Clients read them from `GET /v1/client/integration-types/{type}/flows`
+(see [sessions](features/sessions.md#describe-flows)).
+
+#### Sign-in flows
+
+A flow can open with an OpenID Connect sign-in at the provider
+(authorization code with PKCE). The session returns a URL for the
+holder's browser, waits as `awaiting_redirect`, and continues with the
+ID token's claims as data:
+
+```json
+"entra_sign_in": {
+  "purpose": "verification",
+  "description": "Sign in with your work account",
+  "authorization": {
+    "authorize_url": "https://login.microsoftonline.com/{credentials.tenant_id}/oauth2/v2.0/authorize",
+    "token_url": "https://login.microsoftonline.com/{credentials.tenant_id}/oauth2/v2.0/token",
+    "issuer": "https://login.microsoftonline.com/{credentials.tenant_id}/v2.0",
+    "client_id": "{credentials.client_id}",
+    "client_secret": "{credentials.client_secret}",
+    "scope": "openid profile email",
+    "extra_params": {"prompt": "login"},
+    "capture": {"directory_id": "oid"}
+  },
+  "outputs": {
+    "full_name": "name",
+    "email": "preferred_username",
+    "directory_id": "session.directory_id"
+  },
+  "verified_when": [{"path": "tid"}]
+}
+```
+
+- `steps` may be empty; outputs and `verified_when` then read the
+  claims. With steps, `capture` makes claims available to them as
+  `{session.<name>}`.
+- `authorize_url`, `token_url`, and `issuer` follow the `token_url`
+  rules above: fixed HTTPS host, `{credentials.*}` or `{settings.*}` in
+  the path only.
+- The authorize URL and client id are visible to the holder's browser,
+  so they may not use the credential that holds `client_secret`.
+- `scope` must include `openid`. `extra_params` are literal, and may not
+  set `state`, `nonce`, `redirect_uri`, `code_challenge`, or the other
+  parameters the service controls.
+- Set `issuer` whenever the provider has a fixed one; without it the
+  `iss` claim is not checked.
+- Credentials the sign-in uses count as the tool's required credentials.
+
+The client must register its redirect URI with the provider and in its
+`redirect_uris` setting; see
+[sessions](features/sessions.md#sign-in-flows).
 
 ### Built-in tools
 

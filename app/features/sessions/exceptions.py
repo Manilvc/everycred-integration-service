@@ -74,6 +74,83 @@ class ResultExpiredError(AppError):
 
     def __init__(self) -> None:
         super().__init__(
-            "The result was deleted after the retention period. Start a "
-            "new session to obtain it again."
+            "The result has been deleted (retention ended, it was "
+            "erased, or consent was withdrawn). Start a new session to "
+            "obtain it again."
         )
+
+
+class InputValidationError(AppError):
+    """Raised when inputs break the flow's ``input_specs``.
+
+    Only input names are reported; values are never echoed.
+    """
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "invalid_inputs"
+
+    def __init__(self, names: list[str]) -> None:
+        super().__init__(
+            "These inputs are not in the expected format: "
+            + ", ".join(names)
+            + "."
+        )
+
+
+class ConsentNotRecentError(AppError):
+    """Raised when the relayed consent is too old or in the future."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "consent_not_recent"
+
+    def __init__(self, max_age_minutes: int) -> None:
+        super().__init__(
+            "consent.consented_at must be within the last "
+            f"{max_age_minutes} minutes. Ask the holder again."
+        )
+
+
+class InvalidRedirectUriError(AppError):
+    """Raised when a redirect URI is missing, unexpected, or unknown."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "invalid_redirect_uri"
+
+
+class UnknownRequestedAttributesError(AppError):
+    """Raised when ``requested_attributes`` names outputs the flow lacks."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "unknown_attributes"
+
+    def __init__(self, names: list[str]) -> None:
+        super().__init__(
+            "The flow has no outputs named: " + ", ".join(names) + "."
+        )
+
+
+class UnknownRequestedFieldsError(AppError):
+    """Raised when ``requested_fields`` are not fields of this flow."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "unknown_fields"
+
+    def __init__(self, field_ids: list[uuid.UUID]) -> None:
+        super().__init__(
+            "These are not fields of the flow for this client: "
+            + ", ".join(str(field_id) for field_id in field_ids)
+            + "."
+        )
+
+
+class AuthorizationNotFoundError(NotFoundError):
+    """Raised when no session of the client waits for this ``state``.
+
+    Also the answer for a ``state`` that was already used, so a replayed
+    callback learns nothing.
+    """
+
+    error_code = "authorization_not_found"
+
+    def __init__(self) -> None:
+        super().__init__("No sign-in is pending for this state.")
