@@ -43,6 +43,9 @@ async def test_docs_are_hidden_in_production(
     docs_environment.setenv("SECRET_STORE_BACKEND", "aws")
     docs_environment.setenv("AWS_REGION", "ap-south-1")
     docs_environment.setenv("SECRETS_KMS_KEY_ID", "alias/test")
+    # Production also requires logos in S3; nothing is uploaded here.
+    docs_environment.setenv("LOGO_STORAGE_BACKEND", "s3")
+    docs_environment.setenv("LOGO_S3_BUCKET", "test-logos")
 
     assert await fetch_status(path) == 404
 

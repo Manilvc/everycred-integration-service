@@ -29,6 +29,7 @@ from app.connectors.http.config import FlowConfig
 from app.connectors.registry import ConnectorRegistry
 from app.connectors.resolution import connector_kind, resolve_connector
 from app.core.config import Settings
+from app.core.media import public_url
 from app.core.models import utc_now
 from app.core.secret_store import SecretStore, SecretStoreError
 from app.features.client_integrations.models import (
@@ -672,6 +673,7 @@ class ClientIntegrationService:
             source_role_id=integration_type.id,
             name=state.tool.name,
             status_note=state.tool.description,
+            logo_url=public_url(state.tool.logo_path),
             is_connected=status in _CONNECTED_STATUSES,
             is_active=state.is_enabled,
             is_default=state.is_built_in or is_chosen,
@@ -701,6 +703,7 @@ class ClientIntegrationService:
             source_role_id=integration_type.id,
             name=state.tool.name,
             status_note=state.tool.description,
+            logo_url=public_url(state.tool.logo_path),
             is_connected=status is UserIntegrationStatus.CONNECTED,
             is_active=state.is_usable_by_users,
             is_default=True,
@@ -750,6 +753,7 @@ class ClientIntegrationService:
             name=tool.name,
             provider=tool.provider,
             description=tool.description,
+            logo_url=public_url(tool.logo_path, self.settings),
             # Built-in tools are open to every client, so they list all
             # their types, not only the ones enabled for the client.
             integration_types=[

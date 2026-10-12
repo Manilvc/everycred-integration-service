@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
+from fastapi.staticfiles import StaticFiles
 
 from app.api.openapi import (
     API_DESCRIPTION,
@@ -20,7 +21,7 @@ from app.api.openapi import (
     add_redoc_extensions,
 )
 from app.api.router import api_v1_router
-from app.core.config import get_settings
+from app.core.config import LogoStorageBackend, get_settings
 from app.core.database import create_database_engine, create_session_factory
 from app.core.exceptions import register_exception_handlers
 from app.core.http_client import create_http_client
@@ -111,6 +112,14 @@ def create_app() -> FastAPI:
     add_redoc_extensions(app)
     app.include_router(health_router)
     app.include_router(api_v1_router)
+    if settings.logo_storage_backend is LogoStorageBackend.LOCAL:
+        # Development only: logos stored on disk are served from here,
+        # matching the default LOGO_PUBLIC_BASE_URL.
+        app.mount(
+            "/media",
+            StaticFiles(directory=settings.logo_local_dir, check_dir=False),
+            name="media",
+        )
     return app
 
 

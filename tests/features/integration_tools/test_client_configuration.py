@@ -45,6 +45,7 @@ async def test_admin_chooses_tool_for_a_type(
         "code": "acme-verify",
         "name": "Acme Verify",
         "provider": "Acme",
+        "logo_url": None,
     }
 
 

@@ -25,6 +25,7 @@ from app.core.models import TimestampMixin, UUIDPrimaryKeyMixin
 from app.features.integration_types.models import IntegrationType
 
 TOOL_CODE_MAX_LENGTH = 50
+LOGO_PATH_MAX_LENGTH = 512
 FIELD_KEY_MAX_LENGTH = 255
 FIELD_LABEL_MAX_LENGTH = 100
 FLOW_NAME_MAX_LENGTH = 64
@@ -77,6 +78,9 @@ class IntegrationTool(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             (see ``app/connectors/http/config.py``), or None for tools
             served by Python code or not wired up yet. Holds no
             secrets; credentials are stored per client.
+        logo_path: Object key of the tool's logo in the logo store, e.g.
+            ``integration-tools/logos/surepass/<random>.png``; listings
+            return the full link as ``logo_url``.
         integration_types: Types this tool can be used for.
     """
 
@@ -97,6 +101,7 @@ class IntegrationTool(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Integer, default=0, server_default="0", nullable=False
     )
     connector_config: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    logo_path: Mapped[str | None] = mapped_column(String(LOGO_PATH_MAX_LENGTH))
 
     # selectin loading fetches the types in one extra query per batch of
     # tools; lazy loading is not allowed in async sessions.

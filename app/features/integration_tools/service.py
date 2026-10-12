@@ -13,6 +13,14 @@ from app.connectors.resolution import (
     connector_kind,
     resolve_connector,
 )
+from app.core.config import Settings
+from app.core.media import (
+    MediaStore,
+    MediaStoreError,
+    decode_logo,
+    new_logo_key,
+    public_url,
+)
 from app.features.clients.exceptions import ClientNotFoundError
 from app.features.clients.models import Client
 from app.features.clients.repository import (
@@ -67,6 +75,8 @@ class IntegrationToolService:
         integration_types: Looks up the types a tool serves.
         client_configs: Tells which types a client has enabled.
         clients: Looks up clients for their own field lists.
+        media: Stores tool logos.
+        settings: Logo prefix and public base URL.
         registry: Connector code, used to describe each tool's
             arguments and whether it can be connected yet.
     """
@@ -80,6 +90,8 @@ class IntegrationToolService:
         client_configs: ClientIntegrationConfigRepository,
         clients: ClientRepository,
         registry: ConnectorRegistry,
+        media: MediaStore,
+        settings: Settings,
     ) -> None:
         self.session = session
         self.tools = tools
@@ -88,6 +100,8 @@ class IntegrationToolService:
         self.client_configs = client_configs
         self.clients = clients
         self.registry = registry
+        self.media = media
+        self.settings = settings
 
     async def upsert_tool(
         self, code: str, definition: IntegrationToolUpsert
@@ -95,11 +109,15 @@ class IntegrationToolService:
         """Create the tool ``code`` or replace its whole definition.
 
         ``fields``, when sent, replaces the tool's global field list.
+        ``logo``, when sent, replaces the logo (``null`` removes it); the
+        new file is stored before the database is changed, and the old
+        one is deleted only after the change is committed.
 
         Raises:
             UnknownIntegrationTypesError: A listed type does not exist.
             UnknownToolFlowsError: A field names a flow the tool does not
                 have.
+            MediaStoreError: The logo could not be stored.
         """
         integration_types = await self.integration_types.get_by_codes(
             definition.integration_types
@@ -133,11 +151,37 @@ class IntegrationToolService:
             await self.tool_fields.replace(
                 tool.id, None, self._to_field_rows(definition.fields)
             )
-        await self.session.commit()
+
+        replaced_logo: str | None = None
+        new_logo: str | None = None
+        if "logo" in definition.model_fields_set:
+            replaced_logo = tool.logo_path
+            if definition.logo is not None:
+                image = decode_logo(definition.logo)
+                new_logo = new_logo_key(
+                    self.settings.logo_s3_prefix, code, image.extension
+                )
+                await self.media.save(new_logo, image)
+            tool.logo_path = new_logo
+        try:
+            await self.session.commit()
+        except Exception:
+            if new_logo is not None:
+                await self._delete_logo_quietly(new_logo)
+            raise
+        if replaced_logo is not None and replaced_logo != tool.logo_path:
+            await self._delete_logo_quietly(replaced_logo)
         logger.info(
             "Integration tool %s %s", code, "created" if is_new else "updated"
         )
         return self._to_response(tool)
+
+    async def _delete_logo_quietly(self, key: str) -> None:
+        try:
+            await self.media.delete(key)
+        except MediaStoreError:
+            # An orphaned file costs storage only; the tool is consistent.
+            logger.warning("Logo %s was left in the store", key)
 
     async def list_tools(
         self, filters: IntegrationToolFilters
@@ -378,6 +422,7 @@ class IntegrationToolService:
             name=tool.name,
             provider=tool.provider,
             description=tool.description,
+            logo_url=public_url(tool.logo_path, self.settings),
             is_active=tool.is_active,
             display_order=tool.display_order,
             integration_types=[

@@ -12,6 +12,12 @@ from app.connectors.http.config import (
     OPERATION_NAME_PATTERN,
     HttpConnectorConfig,
 )
+from app.core.media import (
+    MAX_LOGO_TEXT_LENGTH,
+    InvalidLogoError,
+    decode_logo,
+    public_url,
+)
 from app.features.integration_tools.models import (
     FIELD_KEY_MAX_LENGTH,
     FIELD_LABEL_MAX_LENGTH,
@@ -226,6 +232,14 @@ class IntegrationToolSummary(BaseModel):
     code: str
     name: str
     provider: str | None
+    # Read from the tool's ``logo_path`` and returned as a full link.
+    logo_url: str | None = Field(default=None, validation_alias="logo_path")
+
+    @field_validator("logo_url")
+    @classmethod
+    def to_public_url(cls, key: str | None) -> str | None:
+        """Turn the stored key into the link the frontend displays."""
+        return public_url(key)
 
 
 class IntegrationToolResponse(BaseModel):
@@ -236,6 +250,9 @@ class IntegrationToolResponse(BaseModel):
     name: str
     provider: str | None
     description: str | None
+    logo_url: str | None = Field(
+        description="Full link to the tool's logo; null when it has none."
+    )
     is_active: bool
     display_order: int
     integration_types: list[IntegrationTypeSummary]
@@ -276,6 +293,27 @@ class IntegrationToolUpsert(BaseModel):
             "it unchanged, send [] to remove it."
         ),
     )
+    logo: str | None = Field(
+        default=None,
+        max_length=MAX_LOGO_TEXT_LENGTH,
+        description=(
+            "The tool's logo: a PNG, JPEG, or WebP image of at most 1 MB, "
+            "base64-encoded, optionally as a data URI "
+            "(data:image/png;base64,...). Leave out to keep the current "
+            "logo; send null to remove it."
+        ),
+    )
+
+    @field_validator("logo")
+    @classmethod
+    def check_logo(cls, logo: str | None) -> str | None:
+        """Reject data that is not an accepted image, without echoing it."""
+        if logo is not None:
+            try:
+                decode_logo(logo)
+            except InvalidLogoError as exc:
+                raise ValueError(str(exc)) from exc
+        return logo
 
     @field_validator("fields")
     @classmethod
