@@ -21,6 +21,7 @@ from app.features.clients.repository import (
 )
 from app.features.integration_tools.repository import (
     IntegrationToolFieldRepository,
+    IntegrationToolRepository,
 )
 from app.features.integration_types.repository import (
     IntegrationTypeRepository,
@@ -65,6 +66,7 @@ def build_session_service(
         sessions=SessionRepository(session),
         targets=IntegrationTargetResolver(
             integration_types=IntegrationTypeRepository(session),
+            tools=IntegrationToolRepository(session),
             client_configs=ClientIntegrationConfigRepository(session),
             tool_connections=ClientToolConnectionRepository(session),
             credentials=ClientToolCredentialRepository(session),

@@ -7,15 +7,18 @@ or by polling. The client is always taken from the API key.
 """
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.features.clients.dependencies import (
     CurrentClient,
     get_current_client,
 )
+from app.features.integration_tools.models import TOOL_CODE_MAX_LENGTH
 from app.features.sessions.dependencies import SessionServiceDep
 from app.features.sessions.schemas import (
+    TOOL_CODE_PATTERN,
     FlowCatalogResponse,
     SessionAuthorizationCallback,
     SessionCreate,
@@ -62,7 +65,8 @@ _CONFLICT = {
         },
         status.HTTP_404_NOT_FOUND: {
             "model": ErrorResponse,
-            "description": "Unknown integration type",
+            "description": "Unknown integration type, or a tool_code "
+            "that does not serve it",
         },
     },
 )
@@ -70,8 +74,15 @@ async def describe_session_flows(
     integration_type: str,
     current_client: CurrentClient,
     service: SessionServiceDep,
+    tool_code: Annotated[
+        str | None,
+        Query(max_length=TOOL_CODE_MAX_LENGTH, pattern=TOOL_CODE_PATTERN),
+    ] = None,
 ) -> FlowCatalogResponse:
     """Return the flows of the tool chosen for the type.
+
+    Pass ``tool_code`` for another tool that serves the type, when one
+    request verifies the holder with several tools.
 
     Each flow lists the inputs to ask the holder for (label, input
     type, format, masking), whether the holder is redirected to sign
@@ -79,7 +90,9 @@ async def describe_session_flows(
     requested by id. Build the verification screen from this instead
     of hard-coding a provider.
     """
-    return await service.describe_flows(current_client, integration_type)
+    return await service.describe_flows(
+        current_client, integration_type, tool_code
+    )
 
 
 @router.post(
@@ -94,7 +107,7 @@ async def describe_session_flows(
         },
         status.HTTP_404_NOT_FOUND: {
             "model": ErrorResponse,
-            "description": "Unknown integration type or flow",
+            "description": "Unknown integration type, tool, or flow",
         },
         **_CONFLICT,
     },
@@ -106,6 +119,8 @@ async def start_session(
     service: SessionServiceDep,
 ) -> SessionResponse:
     """Start a flow for one user with the tool chosen for the type.
+
+    Send ``tool_code`` to use another tool that serves the type.
 
     ``consent`` is required: record the holder's consent on your side
     first and relay it here. The session runs straight away. It comes

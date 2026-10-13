@@ -232,22 +232,35 @@ class SessionService:
         self.settings = settings
 
     async def describe_flows(
-        self, client: Client, integration_type: str
+        self,
+        client: Client,
+        integration_type: str,
+        tool_code: str | None = None,
     ) -> FlowCatalogResponse:
         """Describe the flows of the client's tool for a type.
 
         Everything a holder-facing screen needs to ask for the inputs,
         and the field keys the client can request by id.
 
+        Args:
+            client: Client asking.
+            integration_type: Integration type code.
+            tool_code: Another tool serving the type; None for the tool
+                chosen for it.
+
         Raises:
             IntegrationTypeNotFoundError: Unknown integration type.
             IntegrationNotEnabledError: Not enabled for the client.
             IntegrationToolNotSelectedError: No tool chosen for the type.
+            IntegrationToolNotFoundError: ``tool_code`` does not serve
+                the type.
             IntegrationToolInactiveError: The chosen tool is inactive.
             IntegrationToolDisabledError: The client switched it off.
             ConnectorNotAvailableError: The tool has no connector.
         """
-        target = await self.targets.resolve(client, integration_type)
+        target = await self.targets.resolve(
+            client, integration_type, tool_code
+        )
         flows = target.connector_class.describe_flows(
             target.tool.connector_config
         )
@@ -301,6 +314,8 @@ class SessionService:
             IntegrationTypeNotFoundError: Unknown integration type.
             IntegrationNotEnabledError: Not enabled for the client.
             IntegrationToolNotSelectedError: No tool chosen for the type.
+            IntegrationToolNotFoundError: ``tool_code`` does not serve
+                the type.
             IntegrationToolInactiveError: The chosen tool is inactive.
             IntegrationToolDisabledError: The client switched it off.
             ConnectorNotAvailableError: The tool has no connector.
@@ -312,7 +327,9 @@ class SessionService:
             UnknownRequestedAttributesError: Unknown requested outputs.
             UnknownRequestedFieldsError: Unknown requested fields.
         """
-        target = await self.targets.resolve(client, request.integration_type)
+        target = await self.targets.resolve(
+            client, request.integration_type, request.tool_code
+        )
         flow = self._flow_or_raise(target, request.flow)
         self._reject_unexpected(flow, request.inputs)
         policies.check_input_formats(flow, request.inputs)
@@ -1335,18 +1352,21 @@ class SessionService:
     async def _current_target(
         self, client: Client, integration_session: IntegrationSession
     ) -> tuple[IntegrationTarget, FlowConfig]:
-        """Resolve the tool again; the setup may have changed meanwhile."""
+        """Resolve the session's tool again; it may have changed meanwhile.
+
+        The session keeps the tool it started with, even if the client
+        chose another tool for the type since: a session may run on a
+        tool other than the chosen one (``tool_code``), so the tool
+        only has to still serve the type and be usable.
+        """
         try:
             target = await self.targets.resolve(
-                client, integration_session.integration_type.code
+                client,
+                integration_session.integration_type.code,
+                integration_session.integration_tool.code,
             )
         except AppError as exc:
             raise StepFailedError(exc.error_code, exc.message) from exc
-        if target.tool.id != integration_session.integration_tool_id:
-            raise StepFailedError(
-                "integration_tool_changed",
-                "The client switched tools while the session was open.",
-            )
         flow = target.connector_class.describe_flows(
             target.tool.connector_config
         ).get(integration_session.flow)

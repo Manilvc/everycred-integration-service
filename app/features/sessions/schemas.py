@@ -16,7 +16,10 @@ from pydantic import (
 )
 
 from app.connectors.http.config import OPERATION_NAME_PATTERN
-from app.features.integration_tools.models import FieldValueType
+from app.features.integration_tools.models import (
+    TOOL_CODE_MAX_LENGTH,
+    FieldValueType,
+)
 from app.features.integration_types.models import CODE_MAX_LENGTH
 from app.features.sessions.models import (
     CONSENT_NOTICE_VERSION_MAX_LENGTH,
@@ -32,6 +35,8 @@ INPUT_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 MAX_INPUTS = 30
 MAX_INPUTS_BYTES = 16_384
 MAX_REQUESTED_FIELDS = 100
+# Same rule as the code in ``PUT /v1/integration-tools/{tool_code}``.
+TOOL_CODE_PATTERN = r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
 # BCP 47 tags as used for notices, e.g. "en", "hi", "en-IN".
 LANGUAGE_TAG_PATTERN = r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$"
 
@@ -105,6 +110,17 @@ class SessionCreate(BaseModel):
 
     integration_type: str = Field(
         min_length=1, max_length=CODE_MAX_LENGTH, examples=["confirm"]
+    )
+    tool_code: str | None = Field(
+        default=None,
+        max_length=TOOL_CODE_MAX_LENGTH,
+        pattern=TOOL_CODE_PATTERN,
+        description=(
+            "A tool serving the type other than the one chosen for it, "
+            "to verify with several tools of one type; the chosen tool "
+            "when omitted."
+        ),
+        examples=["surepass"],
     )
     flow: str = Field(pattern=OPERATION_NAME_PATTERN, examples=["aadhaar_otp"])
     reference: str | None = Field(
@@ -323,7 +339,7 @@ class FlowDescriptorResponse(BaseModel):
 
 
 class FlowCatalogResponse(BaseModel):
-    """The flows the client's chosen tool offers for a type."""
+    """The flows a tool offers for a type (the chosen one by default)."""
 
     integration_type: str
     tool_code: str

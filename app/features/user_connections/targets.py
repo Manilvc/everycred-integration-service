@@ -5,6 +5,11 @@ chain of checks: the type exists and is enabled for the client, a tool
 is chosen, the tool is active and not switched off by the client, and
 it has a connector. This module owns that chain, and builds the
 connector with the client's credentials from the secret store.
+
+The tool is the one chosen for the type, unless the caller names
+another tool that serves the type. That lets one request verify a
+holder with several tools of the same type (an Aadhaar check and a
+Microsoft Entra ID sign-in, say).
 """
 
 import uuid
@@ -31,7 +36,13 @@ from app.features.clients.repository import (
     ClientIntegrationConfigRepository,
     ClientToolCredentialRepository,
 )
+from app.features.integration_tools.exceptions import (
+    IntegrationToolNotFoundError,
+)
 from app.features.integration_tools.models import IntegrationTool
+from app.features.integration_tools.repository import (
+    IntegrationToolRepository,
+)
 from app.features.integration_types.exceptions import (
     IntegrationTypeNotFoundError,
 )
@@ -65,6 +76,7 @@ class IntegrationTargetResolver:
     def __init__(
         self,
         integration_types: IntegrationTypeRepository,
+        tools: IntegrationToolRepository,
         client_configs: ClientIntegrationConfigRepository,
         tool_connections: ClientToolConnectionRepository,
         credentials: ClientToolCredentialRepository,
@@ -73,6 +85,7 @@ class IntegrationTargetResolver:
         http_client: httpx.AsyncClient,
     ) -> None:
         self.integration_types = integration_types
+        self.tools = tools
         self.client_configs = client_configs
         self.tool_connections = tool_connections
         self.credentials = credentials
@@ -113,13 +126,23 @@ class IntegrationTargetResolver:
             raise IntegrationNotEnabledError(code)
         return integration_type, client_config
 
-    async def resolve(self, client: Client, code: str) -> IntegrationTarget:
+    async def resolve(
+        self, client: Client, code: str, tool_code: str | None = None
+    ) -> IntegrationTarget:
         """Return the callable tool the client uses for type ``code``.
+
+        Args:
+            client: Client making the call.
+            code: Integration type code.
+            tool_code: A tool serving the type, other than the chosen
+                one; None for the tool chosen for the type.
 
         Raises:
             IntegrationTypeNotFoundError: No type has this code.
             IntegrationNotEnabledError: The type is not enabled.
             IntegrationToolNotSelectedError: No tool chosen for it.
+            IntegrationToolNotFoundError: ``tool_code`` names no tool
+                that serves the type.
             IntegrationToolInactiveError: The tool is inactive.
             IntegrationToolDisabledError: The client switched it off.
             ConnectorNotAvailableError: The tool has no connector.
@@ -127,9 +150,7 @@ class IntegrationTargetResolver:
         integration_type, client_config = await self.enabled_integration(
             client, code
         )
-        tool = client_config.integration_tool
-        if tool is None:
-            raise IntegrationToolNotSelectedError(code)
+        tool = await self._tool_for(integration_type, client_config, tool_code)
         if not tool.is_active:
             raise IntegrationToolInactiveError(tool.code)
         tool_connection = await self.tool_connections.get(client.id, tool.id)
@@ -143,6 +164,26 @@ class IntegrationTargetResolver:
         return IntegrationTarget(
             integration_type, client_config, tool, connector_class
         )
+
+    async def _tool_for(
+        self,
+        integration_type: IntegrationType,
+        client_config: ClientIntegrationConfig,
+        tool_code: str | None,
+    ) -> IntegrationTool:
+        chosen = client_config.integration_tool
+        if tool_code is None or (
+            chosen is not None and chosen.code == tool_code
+        ):
+            if chosen is None:
+                raise IntegrationToolNotSelectedError(integration_type.code)
+            return chosen
+        tool = await self.tools.get_by_code(tool_code)
+        if tool is None or not tool.serves(integration_type.id):
+            # A tool of another type looks the same as a missing one, so
+            # the catalogue is not exposed.
+            raise IntegrationToolNotFoundError(tool_code)
+        return tool
 
     async def build_connector(
         self,

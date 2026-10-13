@@ -48,6 +48,9 @@ from app.features.clients.repository import (
     ClientToolCredentialRepository,
 )
 from app.features.integration_tools.models import IntegrationTool
+from app.features.integration_tools.repository import (
+    IntegrationToolRepository,
+)
 from app.features.integration_tools.schemas import IntegrationToolSummary
 from app.features.integration_types.models import IntegrationType
 from app.features.integration_types.repository import (
@@ -145,6 +148,7 @@ class UserConnectionService:
         self.settings = settings
         self.targets = IntegrationTargetResolver(
             integration_types=integration_types,
+            tools=IntegrationToolRepository(session),
             client_configs=client_configs,
             tool_connections=tool_connections,
             credentials=credentials,

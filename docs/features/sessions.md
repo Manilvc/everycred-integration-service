@@ -103,7 +103,10 @@ client can only reach its own sessions (others return `404`).
 ### Describe flows
 
 `GET /v1/client/integration-types/confirm/flows` answers for the tool
-chosen for `confirm` in the client's configuration:
+chosen for `confirm` in the client's configuration. Add
+`?tool_code=<code>` to describe another tool that serves the type, when
+one request verifies the holder with several tools (an Aadhaar check and
+a Microsoft Entra ID sign-in, say):
 
 ```json
 {
@@ -163,7 +166,8 @@ curl -X POST \
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `integration_type`, `flow` | yes | The tool is the one chosen for the type. |
+| `integration_type`, `flow` | yes | The flow of the session's tool. |
+| `tool_code` | no | A tool that serves the type, other than the one chosen for it. Omit it for the chosen tool. |
 | `consent` | yes | `consented_at` must be within the last 15 minutes (5 minutes of clock skew allowed). |
 | `inputs` | no | Send what you have; a flow whose inputs are all present runs to the end in this call. Checked against the flow's input specs. |
 | `redirect_uri` | `redirect` flows only | Must exactly match an entry in the client's `redirect_uris` setting for the type. Rejected for other flows. |
@@ -268,7 +272,7 @@ round; the call itself still succeeds.
 | `unexpected_response` | A value the flow captures was missing from the response. |
 | `missing_inputs` / `invalid_inputs` | An input could not be used. |
 | `tool_credentials_missing` | The client has not stored the tool's credentials. |
-| `integration_tool_changed`, `flow_misconfigured`, ... | The setup changed while the session was open. |
+| `integration_tool_disabled`, `flow_misconfigured`, ... | The setup changed while the session was open (the session's tool was switched off or dropped the flow). Choosing another tool for the type does not end open sessions: each keeps the tool it started with. |
 | `session_expired` | Timed out. |
 
 Problems found **before** a session is created are ordinary API errors
@@ -427,3 +431,6 @@ same way; the losing request gets `404 authorization_not_found`.
 - `tests/features/sessions/test_sign_in_flows.py`: authorization URL,
   PKCE, code exchange, ID token checks, single-use state, redirect URI
   rules, unsafe configurations.
+- `tests/features/sessions/test_multiple_tools.py`: `tool_code` on the
+  flow catalog and on start, tools that do not serve the type, tools the
+  client switched off.
