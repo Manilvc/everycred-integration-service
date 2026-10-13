@@ -89,7 +89,7 @@ client can only reach its own sessions (others return `404`).
 
 | Method | Path | Summary |
 |--------|------|---------|
-| GET  | `/v1/client/integration-types/{type}/flows` | Describe the flows for a holder screen |
+| GET  | `/v1/client/integration-types/{type}/flows` | Describe the flows for a holder screen (`tool_code` to pick one of the type's tools) |
 | POST | `/v1/client/users/{user_uuid}/sessions` | Start a session |
 | GET  | `/v1/client/users/{user_uuid}/sessions` | List a user's sessions (`status`, `integration_type`, `limit`, `offset`) |
 | GET  | `/v1/client/sessions/{id}` | Poll status |
@@ -164,10 +164,11 @@ curl -X POST \
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `integration_type`, `flow` | yes | The tool is the one chosen for the type. |
+| `integration_type`, `flow` | yes | The flow of the chosen tool. |
+| `tool_code` | no | One of the type's tools, when it has several (SurePass or Entra ID sign-in for Confirm, say). The type's default tool when omitted. A tool that does not serve the type gets `404 integration_tool_not_found`; a switched-off one `409`. |
 | `consent` | yes | `consented_at` must be within the last 15 minutes (5 minutes of clock skew allowed). |
 | `inputs` | no | Send what you have; a flow whose inputs are all present runs to the end in this call. Checked against the flow's input specs. |
-| `redirect_uri` | `redirect` flows only | Must exactly match an entry in the client's `redirect_uris` setting for the type. Rejected for other flows. |
+| `redirect_uri` | `redirect` flows only | Must exactly match an entry in the client's `redirect_uris` setting for the tool (or the type). Rejected for other flows. |
 | `requested_attributes` | no | Outputs to keep. |
 | `requested_fields` | no | Tool field ids to read from the response. |
 | `reference` | no | Your own reference, echoed back and in webhooks. |
@@ -302,7 +303,7 @@ user, newest verification first. `total` counts users.
 | `unexpected_response` | A value the flow captures was missing from the response. |
 | `missing_inputs` / `invalid_inputs` | An input could not be used. |
 | `tool_credentials_missing` | The client has not stored the tool's credentials. |
-| `integration_tool_changed`, `flow_misconfigured`, ... | The setup changed while the session was open. |
+| `flow_misconfigured`, `integration_tool_disabled`, ... | The setup changed while the session was open. A session always continues through the tool it started with, even if the type's default tool changes. |
 | `session_expired` | Timed out. |
 
 Problems found **before** a session is created are ordinary API errors
@@ -375,12 +376,12 @@ later steps, and a flow with no steps reads its `outputs` and
 `verified_when` from them.
 
 Register the redirect URI in two places: in the provider's application
-registration, and in the client's settings for the type:
+registration, and in the client's settings for the sign-in tool:
 
 ```bash
-curl -X PUT https://<host>/integration/v1/client/integrations/confirm/settings \
+curl -X PUT https://<host>/integration/v1/client/integrations/entra-id-signin \
   -H "X-API-Key: <client api key>" -H "Content-Type: application/json" \
-  -d '{"settings": {"environment": "production",
+  -d '{"settings": {"environment": "prod",
                     "redirect_uris": ["https://api.example.com/v1/holder/kyc/callback"]}}'
 ```
 
@@ -461,3 +462,6 @@ same way; the losing request gets `404 authorization_not_found`.
 - `tests/features/sessions/test_sign_in_flows.py`: authorization URL,
   PKCE, code exchange, ID token checks, single-use state, redirect URI
   rules, unsafe configurations.
+- `tests/features/sessions/test_multiple_tools.py`: several tools for
+  one type, settings per tool, `tool_code` on sessions and flows, open
+  sessions keeping their tool, the user listing.

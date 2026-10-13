@@ -1,6 +1,6 @@
 # SurePass Integration
 
-> Last updated: 2026-09-29
+> Last updated: 2026-10-13
 
 SurePass is connected through the **configuration-driven HTTP
 connector**: there is no SurePass-specific code. Its base URLs, auth
@@ -100,9 +100,12 @@ curl -X PUT http://localhost:8000/v1/clients/<client_id>/integrations/confirm \
 ```
 
 `settings.environment` picks `sandbox` or `production` from the tool's
-`environments`. Clients can change it with
-`PUT /v1/client/integrations/confirm/settings`, but only to a name
-the tool defines, never to a URL.
+`environments`. The setting belongs to SurePass only: other Confirm
+tools (Entra ID sign-in, say) keep their own. Add another tool without
+changing the default with `"is_default": false`. Clients can change
+SurePass's environment from its drawer,
+`PUT /v1/client/integrations/surepass` with `{"settings": {...}}`, but
+only to a name the tool defines, never to a URL.
 
 ## 4. Your backend: connect a user and run operations
 

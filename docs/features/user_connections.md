@@ -1,7 +1,7 @@
 # User Connections
 
 > Package: `app/features/user_connections/` (connectors in `app/connectors/`)
-> Last updated: 2026-10-02
+> Last updated: 2026-10-13
 
 ## Overview
 
@@ -9,12 +9,15 @@ A client project connects each of **its own users** to the integrations
 it has enabled. For every (user, integration type) pair the client
 stores the positional and keyword arguments the integration tool needs,
 and then asks the service to connect. The service calls the connector
-the client chose for that type (see
+the client chose as the type's default tool (see
 [integration tools](integration_tools.md)) as:
 
 ```python
 await connector.connect(*args, **kwargs)
 ```
+
+A type can have several tools for sessions, but a user connection
+belongs to the type, so it always runs through the default tool.
 
 The user is identified by the client's own `user_uuid`; this service
 keeps no user accounts. The client is identified by its API key, never

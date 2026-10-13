@@ -8,6 +8,9 @@ from fastapi.security import APIKeyHeader
 from app.core.config import SettingsDep
 from app.core.database import DbSession
 from app.core.secret_store import SecretStoreDep
+from app.features.client_integrations.repository import (
+    ClientToolConnectionRepository,
+)
 from app.features.clients.exceptions import InvalidApiKeyError
 from app.features.clients.models import Client
 from app.features.clients.repository import (
@@ -67,6 +70,7 @@ def get_client_configuration_service(
         configs=ClientIntegrationConfigRepository(session),
         integration_types=IntegrationTypeRepository(session),
         integration_tools=IntegrationToolRepository(session),
+        tool_connections=ClientToolConnectionRepository(session),
     )
 
 

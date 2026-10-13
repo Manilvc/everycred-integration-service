@@ -4,6 +4,14 @@
 
 ### Breaking
 
+- Settings sent to `PUT /v1/clients/{client_id}/integrations/{type}`
+  with a `tool_code` now belong to that tool only, not to the type, so
+  each tool keeps its own `environment`. `PUT /v1/client/integrations/
+  {type}/settings` writes to the type's default tool. Migration
+  `8e4a1f6c2d93` moves existing settings onto the routed tool.
+- `integration_tool_changed` is no longer reported: an open session
+  keeps the tool it started with when the default changes.
+
 - `POST /v1/client/users/{user_uuid}/sessions` requires `consent`
   (`purpose`, `notice_version`, `language`, `consented_at`, optional
   `reference`). `consented_at` must be within the last 15 minutes.
@@ -12,6 +20,17 @@
 
 ### Added
 
+- Several tools per integration type for a client. The routing call
+  takes `is_default` (default `true`); `false` adds a tool without
+  changing the default. Its response lists every configured tool in
+  `tools`.
+- `tool_code` on `POST /v1/client/users/{user_uuid}/sessions` and on
+  `GET /v1/client/integration-types/{type}/flows`, to use a tool other
+  than the default.
+- `settings` in the tool drawer (`PUT`/`GET /v1/client/integrations/
+  {tool_code}`).
+- The user integrations listing shows every usable tool of an enabled
+  type, with `is_default` marking the default.
 - `PATCH /v1/integration-tools/{tool_code}`: change only the fields
   sent (for example just `logo` or `is_active`); everything else keeps
   its value.

@@ -1,7 +1,7 @@
 # Clients, API Keys, and Client Configuration
 
 > Package: `app/features/clients/`
-> Last updated: 2026-09-28
+> Last updated: 2026-10-13
 
 ## Overview
 
@@ -35,14 +35,14 @@ flowchart LR
 | PUT    | `/v1/clients/{client_id}/tools/{tool_code}/credentials` | Store the client's credentials for a tool (secret store) |
 | GET    | `/v1/clients/{client_id}/tools/{tool_code}/credentials` | Stored credential names, never values |
 | DELETE | `/v1/clients/{client_id}/tools/{tool_code}/credentials` | Remove them |
-| PUT    | `/v1/clients/{client_id}/integrations/{integration_type_code}` | Enable a type, choose its tool, set settings |
+| PUT    | `/v1/clients/{client_id}/integrations/{integration_type_code}` | Enable a type and configure one of its tools (settings per tool) |
 
 ### Client (API key)
 
 | Method | Path | Summary |
 |--------|------|---------|
 | GET    | `/v1/client/configuration` | The calling client's configuration |
-| PUT    | `/v1/client/integrations/{integration_type_code}/settings` | Replace the client's own settings for an enabled type |
+| PUT    | `/v1/client/integrations/{integration_type_code}/settings` | Replace the client's own settings for the type's default tool |
 | GET    | `/v1/client/integration-tools` | Tools usable for the client (see [integration tools](integration_tools.md)) |
 
 ## Walkthrough
@@ -90,19 +90,57 @@ lost, issue a new key and revoke the old one.
 
 ### 3. Configure integrations
 
-Pass `tool_code` to choose which [integration tool](integration_tools.md)
-the client uses for the type; its connector runs when the client's
-users connect.
+A type can use several [integration tools](integration_tools.md), for
+example SurePass and Microsoft Entra ID sign-in for Confirm. Send one
+call per tool. `settings` sent with a `tool_code` belong to that tool
+only, so each tool keeps its own `environment`:
 
 ```bash
+# SurePass, the default for Confirm
 curl -X PUT http://localhost:8000/v1/clients/<client_id>/integrations/confirm \
   -H "Authorization: Bearer <super admin token>" \
   -H "Content-Type: application/json" \
-  -d '{"is_enabled": true, "settings": {"callback_url": "https://portal.example.com/hook"}}'
+  -d '{"is_enabled": true, "tool_code": "surepass", "settings": {"environment": "sandbox"}}'
+
+# Entra ID sign-in as a second Confirm tool; SurePass stays the default
+curl -X PUT http://localhost:8000/v1/clients/<client_id>/integrations/confirm \
+  -H "Authorization: Bearer <super admin token>" \
+  -H "Content-Type: application/json" \
+  -d '{"tool_code": "entra-id-signin", "is_default": false, "settings": {"environment": "prod"}}'
 ```
 
-`PUT` replaces the whole configuration; settings are not merged. The
-integration type must exist (see [integration types](integration_types.md)).
+| Body field | Meaning |
+|------------|---------|
+| `is_enabled` | Whether the type is on for the client |
+| `tool_code` | The tool to configure; it must serve the type and be active |
+| `is_default` | Default `true`: the tool used when a request names none. `false` keeps the current default; a type's first tool always becomes the default |
+| `settings` | Replaces this tool's settings; other tools keep theirs |
+
+Without `tool_code`, the call clears the default tool and `settings`
+apply to the whole type. Type settings are merged under each tool's own,
+the tool's winning.
+
+The response's `integration_tool` and `settings` describe the default
+tool; `tools` lists every tool configured for the type:
+
+```json
+{
+  "integration_type_code": "confirm",
+  "integration_tool": {"code": "surepass", "name": "SurePass", "provider": "SurePass", "logo_url": null},
+  "is_enabled": true,
+  "settings": {"environment": "sandbox"},
+  "tools": [
+    {"tool": {"code": "surepass", "...": "..."}, "is_default": true, "is_enabled": true, "settings": {"environment": "sandbox"}},
+    {"tool": {"code": "entra-id-signin", "...": "..."}, "is_default": false, "is_enabled": true, "settings": {"environment": "prod"}}
+  ]
+}
+```
+
+Sessions name a tool with `tool_code` (see [sessions](sessions.md));
+without it they use the default. The client can also change a tool's
+settings from the drawer, `PUT /v1/client/integrations/{tool_code}`
+with `{"settings": {...}}`. The integration type must exist (see
+[integration types](integration_types.md)).
 
 ### 4. Client reads its configuration
 

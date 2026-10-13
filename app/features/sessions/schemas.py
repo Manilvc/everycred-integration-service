@@ -16,7 +16,10 @@ from pydantic import (
 )
 
 from app.connectors.http.config import OPERATION_NAME_PATTERN
-from app.features.integration_tools.models import FieldValueType
+from app.features.integration_tools.models import (
+    TOOL_CODE_MAX_LENGTH,
+    FieldValueType,
+)
 from app.features.integration_types.models import CODE_MAX_LENGTH
 from app.features.sessions.models import (
     CONSENT_NOTICE_VERSION_MAX_LENGTH,
@@ -106,6 +109,16 @@ class SessionCreate(BaseModel):
     integration_type: str = Field(
         min_length=1, max_length=CODE_MAX_LENGTH, examples=["confirm"]
     )
+    tool_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=TOOL_CODE_MAX_LENGTH,
+        examples=["surepass"],
+        description=(
+            "Tool to run the flow through, when the type has several. "
+            "The type's default tool when omitted."
+        ),
+    )
     flow: str = Field(pattern=OPERATION_NAME_PATTERN, examples=["aadhaar_otp"])
     reference: str | None = Field(
         default=None,
@@ -120,7 +133,7 @@ class SessionCreate(BaseModel):
         description=(
             "Where the provider sends the holder back, for flows that "
             "sign in with the provider. Must be listed in the client's "
-            "`redirect_uris` setting for the type."
+            "`redirect_uris` setting for the tool or the type."
         ),
     )
     requested_attributes: list[str] | None = Field(

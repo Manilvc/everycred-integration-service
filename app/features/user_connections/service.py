@@ -48,6 +48,9 @@ from app.features.clients.repository import (
     ClientToolCredentialRepository,
 )
 from app.features.integration_tools.models import IntegrationTool
+from app.features.integration_tools.repository import (
+    IntegrationToolRepository,
+)
 from app.features.integration_tools.schemas import IntegrationToolSummary
 from app.features.integration_types.models import IntegrationType
 from app.features.integration_types.repository import (
@@ -151,6 +154,7 @@ class UserConnectionService:
             secret_store=secret_store,
             registry=registry,
             http_client=http_client,
+            tools=IntegrationToolRepository(session),
         )
 
     async def list_connections(

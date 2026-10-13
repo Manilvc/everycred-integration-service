@@ -7,13 +7,15 @@ or by polling. The client is always taken from the API key.
 """
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.features.clients.dependencies import (
     CurrentClient,
     get_current_client,
 )
+from app.features.integration_tools.models import TOOL_CODE_MAX_LENGTH
 from app.features.sessions.dependencies import SessionServiceDep
 from app.features.sessions.schemas import (
     FlowCatalogResponse,
@@ -72,8 +74,16 @@ async def describe_session_flows(
     integration_type: str,
     current_client: CurrentClient,
     service: SessionServiceDep,
+    tool_code: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=TOOL_CODE_MAX_LENGTH,
+            description="A tool serving the type; its default when omitted.",
+        ),
+    ] = None,
 ) -> FlowCatalogResponse:
-    """Return the flows of the tool chosen for the type.
+    """Return the flows of one of the type's tools.
 
     Each flow lists the inputs to ask the holder for (label, input
     type, format, masking), whether the holder is redirected to sign
@@ -81,7 +91,9 @@ async def describe_session_flows(
     requested by id. Build the verification screen from this instead
     of hard-coding a provider.
     """
-    return await service.describe_flows(current_client, integration_type)
+    return await service.describe_flows(
+        current_client, integration_type, tool_code
+    )
 
 
 @router.post(

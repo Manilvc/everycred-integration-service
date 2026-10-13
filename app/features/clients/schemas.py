@@ -146,7 +146,8 @@ class ApiKeyCreatedResponse(ApiKeyResponse):
     )
 
 
-def _check_settings_size(settings: dict[str, Any]) -> dict[str, Any]:
+def check_settings_size(settings: dict[str, Any]) -> dict[str, Any]:
+    """Reject settings larger than ``MAX_SETTINGS_BYTES`` once encoded."""
     encoded_size = len(json.dumps(settings).encode())
     if encoded_size > MAX_SETTINGS_BYTES:
         raise ValueError(
@@ -165,20 +166,34 @@ class IntegrationConfigUpdate(BaseModel):
         default=None,
         max_length=TOOL_CODE_MAX_LENGTH,
         description=(
-            "Tool this client uses for the type. Must serve the type and "
-            "be active. Omit or send null to clear the choice."
+            "A tool this client uses for the type. Must serve the type "
+            "and be active. A type can use several tools; send one per "
+            "call. Omit or send null to clear the default tool."
+        ),
+    )
+    is_default: bool = Field(
+        default=True,
+        description=(
+            "Make `tool_code` the tool used when a request names none. "
+            "Send false to configure another tool and keep the current "
+            "default; the first tool of a type always becomes default."
         ),
     )
     settings: dict[str, Any] = Field(
         default_factory=dict,
-        description="Non-secret options. Do not put credentials here.",
+        description=(
+            "Non-secret options, such as the provider `environment`. "
+            "With `tool_code` they apply to that tool only; without it, "
+            "to every tool of the type unless the tool sets its own. Do "
+            "not put credentials here."
+        ),
     )
 
     @field_validator("settings")
     @classmethod
     def check_settings_size(cls, settings: dict[str, Any]) -> dict[str, Any]:
         """Reject settings larger than ``MAX_SETTINGS_BYTES`` once encoded."""
-        return _check_settings_size(settings)
+        return check_settings_size(settings)
 
 
 class ClientSettingsUpdate(BaseModel):
@@ -197,17 +212,33 @@ class ClientSettingsUpdate(BaseModel):
     @classmethod
     def check_settings_size(cls, settings: dict[str, Any]) -> dict[str, Any]:
         """Reject settings larger than ``MAX_SETTINGS_BYTES`` once encoded."""
-        return _check_settings_size(settings)
+        return check_settings_size(settings)
+
+
+class ConfiguredToolResponse(BaseModel):
+    """One tool a client uses for a type, with its own settings."""
+
+    tool: IntegrationToolSummary
+    is_default: bool
+    is_enabled: bool
+    settings: dict[str, Any] = Field(
+        description="The tool's own settings, merged over the type's."
+    )
 
 
 class IntegrationConfigResponse(BaseModel):
-    """A client's configuration for one integration type."""
+    """A client's configuration for one integration type.
+
+    ``integration_tool`` and ``settings`` describe the default tool;
+    ``tools`` lists every tool configured for the type.
+    """
 
     integration_type_code: str
     integration_type_name: str
     integration_tool: IntegrationToolSummary | None
     is_enabled: bool
     settings: dict[str, Any]
+    tools: list[ConfiguredToolResponse] = Field(default_factory=list)
     updated_at: datetime
 
 
