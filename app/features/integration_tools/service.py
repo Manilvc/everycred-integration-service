@@ -3,10 +3,12 @@
 import logging
 import uuid
 from collections.abc import Collection
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.base import describe_parameters
+from app.connectors.http.config import HttpConnectorConfig
 from app.connectors.registry import ConnectorRegistry
 from app.connectors.resolution import (
     ConnectorKind,
@@ -48,6 +50,7 @@ from app.features.integration_tools.schemas import (
     FlowDescriptionResponse,
     IntegrationToolFieldResponse,
     IntegrationToolFilters,
+    IntegrationToolPatch,
     IntegrationToolResponse,
     IntegrationToolUpsert,
     IntegrationTypeSummary,
@@ -56,6 +59,7 @@ from app.features.integration_tools.schemas import (
     ToolFieldInput,
     ToolFieldsUpdate,
 )
+from app.features.integration_types.models import IntegrationType
 from app.features.integration_types.repository import (
     IntegrationTypeRepository,
 )
@@ -119,15 +123,7 @@ class IntegrationToolService:
                 have.
             MediaStoreError: The logo could not be stored.
         """
-        integration_types = await self.integration_types.get_by_codes(
-            definition.integration_types
-        )
-        unknown_codes = set(definition.integration_types) - {
-            integration_type.code for integration_type in integration_types
-        }
-        if unknown_codes:
-            raise UnknownIntegrationTypesError(list(unknown_codes))
-
+        integration_types = await self._get_types(definition.integration_types)
         tool = await self.tools.get_by_code(code)
         is_new = tool is None
         if tool is None:
@@ -138,28 +134,103 @@ class IntegrationToolService:
         tool.description = definition.description
         tool.is_active = definition.is_active
         tool.display_order = definition.display_order
-        tool.integration_types = list(integration_types)
-        tool.connector_config = (
-            definition.connector_config.model_dump(mode="json")
-            if definition.connector_config
-            else None
-        )
+        tool.integration_types = integration_types
+        tool.connector_config = self._dump_config(definition.connector_config)
         if definition.fields is not None:
-            self._check_field_flows(tool, definition.fields)
-            # A new tool's id is assigned on flush; fields refer to it.
-            await self.session.flush()
-            await self.tool_fields.replace(
-                tool.id, None, self._to_field_rows(definition.fields)
-            )
+            await self._replace_global_fields(tool, definition.fields)
+        await self._save_with_logo(
+            tool, definition.logo, "logo" in definition.model_fields_set
+        )
+        logger.info(
+            "Integration tool %s %s", code, "created" if is_new else "updated"
+        )
+        return self._to_response(tool)
 
+    async def update_tool(
+        self, code: str, changes: IntegrationToolPatch
+    ) -> IntegrationToolResponse:
+        """Change only the parts of tool ``code`` present in ``changes``.
+
+        Fields left out keep their value. ``connector_config`` and
+        ``fields``, when sent, are replaced as a whole; ``logo`` follows
+        the same rules as in :meth:`upsert_tool`.
+
+        Raises:
+            IntegrationToolNotFoundError: No tool has this code.
+            UnknownIntegrationTypesError: A listed type does not exist.
+            UnknownToolFlowsError: A field names a flow the tool does not
+                have.
+            MediaStoreError: The logo could not be stored.
+        """
+        tool = await self.tools.get_by_code(code)
+        if tool is None:
+            raise IntegrationToolNotFoundError(code)
+        sent = changes.model_fields_set
+        for column in (
+            "name",
+            "provider",
+            "description",
+            "is_active",
+            "display_order",
+        ):
+            if column in sent:
+                setattr(tool, column, getattr(changes, column))
+        if changes.integration_types is not None:
+            tool.integration_types = await self._get_types(
+                changes.integration_types
+            )
+        if "connector_config" in sent:
+            tool.connector_config = self._dump_config(changes.connector_config)
+        # Checked against the new connector config when both are sent.
+        if changes.fields is not None:
+            await self._replace_global_fields(tool, changes.fields)
+        await self._save_with_logo(tool, changes.logo, "logo" in sent)
+        logger.info(
+            "Integration tool %s updated: %s", code, ", ".join(sorted(sent))
+        )
+        return self._to_response(tool)
+
+    async def _get_types(self, codes: list[str]) -> list[IntegrationType]:
+        integration_types = await self.integration_types.get_by_codes(codes)
+        unknown_codes = set(codes) - {
+            integration_type.code for integration_type in integration_types
+        }
+        if unknown_codes:
+            raise UnknownIntegrationTypesError(list(unknown_codes))
+        return list(integration_types)
+
+    @staticmethod
+    def _dump_config(
+        config: HttpConnectorConfig | None,
+    ) -> dict[str, Any] | None:
+        return config.model_dump(mode="json") if config else None
+
+    async def _replace_global_fields(
+        self, tool: IntegrationTool, fields: list[ToolFieldInput]
+    ) -> None:
+        self._check_field_flows(tool, fields)
+        # A new tool's id is assigned on flush; fields refer to it.
+        await self.session.flush()
+        await self.tool_fields.replace(
+            tool.id, None, self._to_field_rows(fields)
+        )
+
+    async def _save_with_logo(
+        self, tool: IntegrationTool, logo: str | None, is_logo_sent: bool
+    ) -> None:
+        """Commit the tool, storing a sent logo first.
+
+        The new file is stored before the commit and removed again if
+        the commit fails; the replaced file is deleted only afterwards.
+        """
         replaced_logo: str | None = None
         new_logo: str | None = None
-        if "logo" in definition.model_fields_set:
+        if is_logo_sent:
             replaced_logo = tool.logo_path
-            if definition.logo is not None:
-                image = decode_logo(definition.logo)
+            if logo is not None:
+                image = decode_logo(logo)
                 new_logo = new_logo_key(
-                    self.settings.logo_s3_prefix, code, image.extension
+                    self.settings.logo_s3_prefix, tool.code, image.extension
                 )
                 await self.media.save(new_logo, image)
             tool.logo_path = new_logo
@@ -171,10 +242,6 @@ class IntegrationToolService:
             raise
         if replaced_logo is not None and replaced_logo != tool.logo_path:
             await self._delete_logo_quietly(replaced_logo)
-        logger.info(
-            "Integration tool %s %s", code, "created" if is_new else "updated"
-        )
-        return self._to_response(tool)
 
     async def _delete_logo_quietly(self, key: str) -> None:
         try:

@@ -12,6 +12,9 @@
 
 ### Added
 
+- `PATCH /v1/integration-tools/{tool_code}`: change only the fields
+  sent (for example just `logo` or `is_active`); everything else keeps
+  its value.
 - `GET /v1/client/integration-types/{type}/flows`: flows of the
   client's tool with input specs, kind (`input` or `redirect`),
   outputs, and requestable field ids.

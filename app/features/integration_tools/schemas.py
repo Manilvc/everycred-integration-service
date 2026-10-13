@@ -6,7 +6,13 @@ from enum import StrEnum
 from typing import Annotated
 
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.connectors.http.config import (
     OPERATION_NAME_PATTERN,
@@ -90,6 +96,16 @@ class ToolFieldInput(BaseModel):
         default=None, max_length=FIELD_LABEL_MAX_LENGTH, examples=["PIN code"]
     )
     value_type: FieldValueType = FieldValueType.STRING
+
+
+def _check_logo(logo: str | None) -> str | None:
+    if logo is not None:
+        try:
+            decode_logo(logo)
+        except InvalidLogoError as exc:
+            # The message names the problem; the data itself is not echoed.
+            raise ValueError(str(exc)) from exc
+    return logo
 
 
 def _check_unique_fields(fields: list[ToolFieldInput]) -> list[ToolFieldInput]:
@@ -308,12 +324,7 @@ class IntegrationToolUpsert(BaseModel):
     @classmethod
     def check_logo(cls, logo: str | None) -> str | None:
         """Reject data that is not an accepted image, without echoing it."""
-        if logo is not None:
-            try:
-                decode_logo(logo)
-            except InvalidLogoError as exc:
-                raise ValueError(str(exc)) from exc
-        return logo
+        return _check_logo(logo)
 
     @field_validator("fields")
     @classmethod
@@ -328,3 +339,91 @@ class IntegrationToolUpsert(BaseModel):
     def deduplicate_types(cls, codes: list[str]) -> list[str]:
         """Keep the first occurrence of each code, in order."""
         return list(dict.fromkeys(codes))
+
+
+# Columns that always hold a value, so a patch may change but not clear
+# them.
+_REQUIRED_TOOL_FIELDS = (
+    "name",
+    "is_active",
+    "display_order",
+    "integration_types",
+)
+
+
+class IntegrationToolPatch(BaseModel):
+    """Changes to part of a tool; fields left out keep their value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(
+        default=None, min_length=1, max_length=TOOL_NAME_MAX_LENGTH
+    )
+    provider: str | None = Field(default=None, max_length=PROVIDER_MAX_LENGTH)
+    description: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
+    display_order: int | None = Field(default=None, ge=0, le=100_000)
+    integration_types: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+        description="Replaces the codes of the types this tool serves.",
+    )
+    connector_config: HttpConnectorConfig | None = Field(
+        default=None,
+        description=(
+            "Replaces the whole connector configuration; null removes it. "
+            "Must not contain secrets."
+        ),
+    )
+    fields: list[ToolFieldInput] | None = Field(
+        default=None,
+        max_length=MAX_TOOL_FIELDS,
+        description=(
+            "Replaces the tool's global field list; send [] to remove it."
+        ),
+    )
+    logo: str | None = Field(
+        default=None,
+        max_length=MAX_LOGO_TEXT_LENGTH,
+        description=(
+            "A PNG, JPEG, or WebP image of at most 1 MB, base64-encoded or "
+            "as a data URI; null removes the logo."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_changes(self) -> "IntegrationToolPatch":
+        """Require at least one change and no null for required columns."""
+        if not self.model_fields_set:
+            raise ValueError("send at least one field to change")
+        cleared = [
+            name
+            for name in _REQUIRED_TOOL_FIELDS
+            if name in self.model_fields_set and getattr(self, name) is None
+        ]
+        if cleared:
+            raise ValueError(f"cannot be null: {', '.join(cleared)}")
+        if "fields" in self.model_fields_set and self.fields is None:
+            raise ValueError("cannot be null: fields; send [] to remove them")
+        return self
+
+    @field_validator("logo")
+    @classmethod
+    def check_logo(cls, logo: str | None) -> str | None:
+        """Reject data that is not an accepted image, without echoing it."""
+        return _check_logo(logo)
+
+    @field_validator("fields")
+    @classmethod
+    def check_unique_fields(
+        cls, fields: list[ToolFieldInput] | None
+    ) -> list[ToolFieldInput] | None:
+        """Reject a flow and key listed twice."""
+        return None if fields is None else _check_unique_fields(fields)
+
+    @field_validator("integration_types")
+    @classmethod
+    def deduplicate_types(cls, codes: list[str] | None) -> list[str] | None:
+        """Keep the first occurrence of each code, in order."""
+        return None if codes is None else list(dict.fromkeys(codes))
