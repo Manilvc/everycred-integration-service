@@ -395,3 +395,128 @@ async def test_inputs_saved_without_a_tool_go_to_the_next_default(
     assert connected.status_code == 200, connected.text
     assert connected.json()["id"] == pending.json()["id"]
     assert connected.json()["integration_tool"]["code"] == "beta-identity"
+
+
+def tool_connection_url(code: str, action: str = "") -> str:
+    base = f"/v1/client/users/{USER}/connections/{code}"
+    return f"{base}/{action}" if action else base
+
+
+async def test_connection_by_tool_code_in_the_path(
+    client: AsyncClient,
+    two_tools: dict[str, Any],
+    super_admin_headers: dict[str, str],
+) -> None:
+    hr_only = copy.deepcopy(BETA_DEFINITION)
+    hr_only["integration_types"] = ["gather"]
+    await client.put(
+        "/v1/integration-tools/hr-only",
+        json=hr_only,
+        headers=super_admin_headers,
+    )
+    await client.put(
+        f"/v1/clients/{two_tools['client_id']}/tools/hr-only/credentials",
+        json={"credentials": {"api_token": API_TOKEN}},
+        headers=super_admin_headers,
+    )
+
+    saved = await client.put(
+        tool_connection_url("hr-only"),
+        json={"kwargs": {"employee_id": "E-1001"}},
+        headers=two_tools["key"],
+    )
+    read = await client.get(
+        tool_connection_url("hr-only"), headers=two_tools["key"]
+    )
+
+    # A tool serving one type needs nothing else in the URL.
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["integration_type_code"] == "gather"
+    assert saved.json()["integration_tool"]["code"] == "hr-only"
+    assert saved.json()["status"] == "connected"
+    assert read.json()["id"] == saved.json()["id"]
+
+
+async def test_tool_serving_several_types_needs_the_type(
+    client: AsyncClient, two_tools: dict[str, Any]
+) -> None:
+    ambiguous = await client.put(
+        tool_connection_url("beta-identity"),
+        json={"kwargs": {"id_number": AADHAAR}},
+        headers=two_tools["key"],
+    )
+    named = await client.put(
+        tool_connection_url("beta-identity"),
+        params={"integration_type": "confirm"},
+        json={"kwargs": {"id_number": AADHAAR}},
+        headers=two_tools["key"],
+    )
+
+    assert ambiguous.status_code == 422
+    assert ambiguous.json()["error"]["code"] == "integration_type_required"
+    assert named.status_code == 200, named.text
+    assert named.json()["integration_type_code"] == "confirm"
+    assert named.json()["integration_tool"]["code"] == "beta-identity"
+
+
+async def test_connection_by_tool_id_in_the_path(
+    client: AsyncClient,
+    two_tools: dict[str, Any],
+    super_admin_headers: dict[str, str],
+) -> None:
+    tools = await client.get(
+        "/v1/integration-tools", headers=super_admin_headers
+    )
+    beta_id = next(
+        tool["id"]
+        for tool in tools.json()["items"]
+        if tool["code"] == "beta-identity"
+    )
+    await client.put(
+        tool_connection_url("beta-identity"),
+        params={"integration_type": "confirm"},
+        json={"kwargs": {"id_number": AADHAAR}},
+        headers=two_tools["key"],
+    )
+
+    response = await client.post(
+        tool_connection_url(beta_id, "connect"),
+        params={"integration_type": "confirm"},
+        headers=two_tools["key"],
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["integration_tool"]["code"] == "beta-identity"
+
+
+@pytest.mark.parametrize(
+    ("code", "params", "error_code"),
+    [
+        ("no-such-tool", {}, "integration_tool_not_found"),
+        (
+            "beta-identity",
+            {"integration_type": "confirm", "tool_code": "acme-identity"},
+            "conflicting_tool_code",
+        ),
+        (
+            "beta-identity",
+            {"integration_type": "records"},
+            "integration_tool_not_found",
+        ),
+    ],
+)
+async def test_tool_path_rejects_bad_requests(
+    client: AsyncClient,
+    two_tools: dict[str, Any],
+    code: str,
+    params: dict[str, str],
+    error_code: str,
+) -> None:
+    response = await client.put(
+        tool_connection_url(code),
+        params=params,
+        json={"kwargs": {"id_number": AADHAAR}},
+        headers=two_tools["key"],
+    )
+
+    assert response.json()["error"]["code"] == error_code, response.text

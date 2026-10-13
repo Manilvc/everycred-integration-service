@@ -18,22 +18,29 @@ await connector.connect(*args, **kwargs)
 A type can have several tools, and a user has a separate connection to
 each: connecting a user to SurePass and to Microsoft Entra ID for
 Confirm keeps two connections, each with its own inputs and status.
-Every route below takes an optional `?tool_code=`; without it, the
-type's default tool is used.
+
+The connection URL names the **tool**, by code or id. The integration
+type is the one the tool serves for the client:
 
 ```bash
 # The user's SurePass connection
-curl -X PUT "https://<host>/integration/v1/client/users/<user_uuid>/connections/confirm?tool_code=surepass" \
+curl -X PUT "https://<host>/integration/v1/client/users/<user_uuid>/connections/surepass" \
   -H "X-API-Key: <client api key>" -H "Content-Type: application/json" \
   -d '{"kwargs": {"id_number": "<aadhaar>"}}'
 
 # The same user's Entra ID connection, kept alongside it
-curl -X PUT "https://<host>/integration/v1/client/users/<user_uuid>/connections/confirm?tool_code=entra-id-signin" \
+curl -X PUT "https://<host>/integration/v1/client/users/<user_uuid>/connections/entra-id-signin" \
   -H "X-API-Key: <client api key>" -H "Content-Type: application/json" \
   -d '{"kwargs": {}}'
 ```
 
-A `tool_code` that does not serve the type answers
+| `{code}` in the URL | Connection |
+|---------------------|------------|
+| Tool code or id (`surepass`) | That tool. When it serves several of the client's types, add `?integration_type=confirm`, or the call fails with `422 integration_type_required` |
+| Integration type code (`confirm`) | The tool in `?tool_code=`, or the type's default tool. Kept for existing callers; type codes are matched before tool codes |
+
+A tool in the path and a different `tool_code` answer
+`422 conflicting_tool_code`. A tool that does not serve the type answers
 `404 integration_tool_not_found`. Inputs saved while a type has no tool
 stay `pending` with `integration_tool: null`, and are taken over by the
 tool that becomes the type's default.
@@ -59,11 +66,14 @@ All routes require `X-API-Key`.
 |--------|------|---------|
 | GET    | `/v1/client/users/{user_uuid}/integrations` | The integrations the user is connected to, grouped by type |
 | GET    | `/v1/client/users/{user_uuid}/connections` | List the user's connections |
-| GET    | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Get the connection to one tool (`?tool_code=`) |
-| PUT    | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Save `args` / `kwargs` for one tool and connect (`?tool_code=`) |
-| POST   | `/v1/client/users/{user_uuid}/connections/{integration_type_code}/connect` | Connect again with the saved parameters (`?tool_code=`) |
-| POST   | `/v1/client/users/{user_uuid}/connections/{integration_type_code}/operations/{operation}` | Run one operation of the tool (`?tool_code=`) |
-| DELETE | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Delete the connection to one tool; others stay (`?tool_code=`) |
+| GET    | `/v1/client/users/{user_uuid}/connections/{code}` | Get the connection to one tool |
+| PUT    | `/v1/client/users/{user_uuid}/connections/{code}` | Save `args` / `kwargs` for one tool and connect |
+| POST   | `/v1/client/users/{user_uuid}/connections/{code}/connect` | Connect again with the saved parameters |
+| POST   | `/v1/client/users/{user_uuid}/connections/{code}/operations/{operation}` | Run one operation of the tool |
+| DELETE | `/v1/client/users/{user_uuid}/connections/{code}` | Delete the connection to one tool; others stay |
+
+`{code}` is a tool code or id (or a type code; see above). Optional
+query parameters: `integration_type`, `tool_code`.
 
 ### A user's integrations with connection status
 
@@ -362,4 +372,5 @@ Table `integration_operation_logs`: one row per operation call, with
 - `tests/connectors/test_registry.py` — registry and signature checks.
 - `tests/features/sessions/test_multiple_tools.py` — a connection per
   tool: save, read, reconnect, delete one tool only, the user listing,
-  and inputs saved before a tool was chosen.
+  inputs saved before a tool was chosen, and tool codes and ids in the
+  URL.

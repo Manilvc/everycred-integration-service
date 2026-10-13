@@ -60,8 +60,10 @@ from app.features.integration_types.repository import (
     IntegrationTypeRepository,
 )
 from app.features.user_connections.exceptions import (
+    ConflictingToolCodeError,
     ConnectionFailedError,
     ConnectionNotFoundError,
+    IntegrationTypeRequiredError,
     InvalidConnectionParametersError,
     InvalidInputsError,
     MissingInputsError,
@@ -204,6 +206,71 @@ class UserConnectionService:
             )
             for connection, integration_type in rows
         ]
+
+    async def interpret_path(
+        self,
+        client: Client,
+        code: str,
+        tool_code: str | None = None,
+        integration_type_code: str | None = None,
+    ) -> tuple[str, str | None]:
+        """Turn the code in a connection URL into a type and a tool.
+
+        The URL may name a tool (``surepass``, or the tool's id), which
+        is the usual form, or an integration type (``confirm``) with an
+        optional ``tool_code``. A type code is matched first, so URLs
+        written before tools could be named keep working.
+
+        For a tool, the type is ``integration_type_code`` when given,
+        otherwise the one type it serves for the client (an enabled
+        type, or its only type).
+
+        Returns:
+            The integration type code and the tool code (None for the
+            type's default tool).
+
+        Raises:
+            IntegrationToolNotFoundError: No type or tool has ``code``,
+                or the tool does not serve ``integration_type_code``.
+            ConflictingToolCodeError: The path names a tool and
+                ``tool_code`` another.
+            IntegrationTypeRequiredError: The tool serves several of
+                the client's types and none was named.
+        """
+        if await self.integration_types.get_by_code(code) is not None:
+            return code, tool_code
+        tool = await self._tool_by_code_or_id(code)
+        if tool is None:
+            raise IntegrationToolNotFoundError(code)
+        if tool_code is not None and tool_code != tool.code:
+            raise ConflictingToolCodeError(tool.code, tool_code)
+        served = list(tool.integration_types)
+        if integration_type_code is not None:
+            if integration_type_code not in {item.code for item in served}:
+                raise IntegrationToolNotFoundError(tool.code)
+            return integration_type_code, tool.code
+        enabled_rows = await self.client_configs.list_with_types(
+            client.id, usable_only=True
+        )
+        enabled_ids = {item.id for _, item in enabled_rows}
+        candidates = [
+            item for item in served if item.id in enabled_ids
+        ] or served
+        if len(candidates) != 1:
+            raise IntegrationTypeRequiredError(
+                tool.code, [item.code for item in candidates]
+            )
+        return candidates[0].code, tool.code
+
+    async def _tool_by_code_or_id(self, code: str) -> IntegrationTool | None:
+        tool = await self.tools.get_by_code(code)
+        if tool is not None:
+            return tool
+        try:
+            tool_id = uuid.UUID(code)
+        except ValueError:
+            return None
+        return await self.tools.get_by_id(tool_id)
 
     async def get_connection(
         self,

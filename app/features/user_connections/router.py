@@ -47,8 +47,29 @@ router = APIRouter(
     },
 )
 
-IntegrationTypeCode = Annotated[
-    str, Path(min_length=1, max_length=CODE_MAX_LENGTH)
+ConnectionCode = Annotated[
+    str,
+    Path(
+        min_length=1,
+        max_length=max(TOOL_CODE_MAX_LENGTH, 36),
+        description=(
+            "The tool to connect through: its code (`surepass`, "
+            "`entra-id`) or id. An integration type code (`confirm`) "
+            "also works, with `tool_code` or the type's default tool."
+        ),
+    ),
+]
+IntegrationTypeQuery = Annotated[
+    str | None,
+    Query(
+        alias="integration_type",
+        min_length=1,
+        max_length=CODE_MAX_LENGTH,
+        description=(
+            "Only for a tool serving several of your integration types: "
+            "which one the connection is for."
+        ),
+    ),
 ]
 ToolCode = Annotated[
     str | None,
@@ -70,7 +91,7 @@ _TYPE_ERRORS = {
     },
     status.HTTP_404_NOT_FOUND: {
         "model": ErrorResponse,
-        "description": "Unknown integration type or tool, or no connection",
+        "description": "Unknown tool or integration type, or no connection",
     },
 }
 
@@ -108,26 +129,30 @@ async def list_user_connections(
 
 
 @router.get(
-    "/{integration_type_code}",
+    "/{code}",
     response_model=UserConnectionResponse,
     summary="Get a user's connection to one integration",
     responses=_TYPE_ERRORS,
 )
 async def get_user_connection(
     user_uuid: uuid.UUID,
-    integration_type_code: IntegrationTypeCode,
+    code: ConnectionCode,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
     tool_code: ToolCode = None,
+    integration_type: IntegrationTypeQuery = None,
 ) -> UserConnectionResponse:
     """Return the connection to one tool, with parameter values hidden."""
+    integration_type_code, tool_code = await service.interpret_path(
+        current_client, code, tool_code, integration_type
+    )
     return await service.get_connection(
         current_client, user_uuid, integration_type_code, tool_code
     )
 
 
 @router.put(
-    "/{integration_type_code}",
+    "/{code}",
     response_model=UserConnectionResponse,
     summary="Save a user's connection parameters and connect",
     responses={
@@ -140,11 +165,12 @@ async def get_user_connection(
 )
 async def save_user_connection(
     user_uuid: uuid.UUID,
-    integration_type_code: IntegrationTypeCode,
+    code: ConnectionCode,
     parameters: ConnectionParameters,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
     tool_code: ToolCode = None,
+    integration_type: IntegrationTypeQuery = None,
 ) -> UserConnectionResponse:
     """Store ``args`` and ``kwargs``, encrypted, and connect with them.
 
@@ -157,6 +183,9 @@ async def save_user_connection(
     Each tool has its own connection: `?tool_code=surepass` and
     `?tool_code=entra-id-signin` are kept side by side.
     """
+    integration_type_code, tool_code = await service.interpret_path(
+        current_client, code, tool_code, integration_type
+    )
     return await service.save_parameters(
         current_client,
         user_uuid,
@@ -167,7 +196,7 @@ async def save_user_connection(
 
 
 @router.post(
-    "/{integration_type_code}/connect",
+    "/{code}/connect",
     response_model=UserConnectionResponse,
     summary="Connect again with the saved parameters",
     responses={
@@ -188,23 +217,27 @@ async def save_user_connection(
 )
 async def connect_user(
     user_uuid: uuid.UUID,
-    integration_type_code: IntegrationTypeCode,
+    code: ConnectionCode,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
     tool_code: ToolCode = None,
+    integration_type: IntegrationTypeQuery = None,
 ) -> UserConnectionResponse:
     """Run the connector as ``connect(*args, **kwargs)``.
 
     On failure the response is ``502`` and the connection is saved with
     status ``failed`` and a ``last_error`` explaining why.
     """
+    integration_type_code, tool_code = await service.interpret_path(
+        current_client, code, tool_code, integration_type
+    )
     return await service.connect(
         current_client, user_uuid, integration_type_code, tool_code
     )
 
 
 @router.post(
-    "/{integration_type_code}/operations/{operation}",
+    "/{code}/operations/{operation}",
     response_model=OperationResultResponse,
     summary="Run an operation of the tool for the user",
     responses={
@@ -235,12 +268,13 @@ async def connect_user(
 )
 async def run_user_operation(
     user_uuid: uuid.UUID,
-    integration_type_code: IntegrationTypeCode,
+    code: ConnectionCode,
     operation: OperationName,
     request: OperationRequest,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
     tool_code: ToolCode = None,
+    integration_type: IntegrationTypeQuery = None,
 ) -> OperationResultResponse:
     """Call a tool of this type for this user.
 
@@ -254,6 +288,9 @@ async def run_user_operation(
     is `200` with `success: false`; errors mean the call could not be
     made or completed.
     """
+    integration_type_code, tool_code = await service.interpret_path(
+        current_client, code, tool_code, integration_type
+    )
     return await service.run_operation(
         current_client,
         user_uuid,
@@ -265,19 +302,23 @@ async def run_user_operation(
 
 
 @router.delete(
-    "/{integration_type_code}",
+    "/{code}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a user's connection",
     responses=_TYPE_ERRORS,
 )
 async def delete_user_connection(
     user_uuid: uuid.UUID,
-    integration_type_code: IntegrationTypeCode,
+    code: ConnectionCode,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
     tool_code: ToolCode = None,
+    integration_type: IntegrationTypeQuery = None,
 ) -> None:
     """Remove one tool's connection and its stored parameters."""
+    integration_type_code, tool_code = await service.interpret_path(
+        current_client, code, tool_code, integration_type
+    )
     await service.delete_connection(
         current_client, user_uuid, integration_type_code, tool_code
     )

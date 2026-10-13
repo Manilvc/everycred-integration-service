@@ -26,6 +26,10 @@ class IntegrationToolRepository:
             select(IntegrationTool).where(IntegrationTool.code == code)
         )
 
+    async def get_by_id(self, tool_id: uuid.UUID) -> IntegrationTool | None:
+        """Return the tool with this id, or None."""
+        return await self.session.get(IntegrationTool, tool_id)
+
     async def list_active_for_types(
         self, integration_type_ids: Collection[uuid.UUID]
     ) -> Sequence[IntegrationTool]:

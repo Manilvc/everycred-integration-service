@@ -25,6 +25,10 @@
 
 ### Added
 
+- Connection URLs take a tool code or id:
+  `/v1/client/users/{user_uuid}/connections/surepass`. A tool serving
+  several of the client's types needs `?integration_type=`. Type codes
+  in the URL still work.
 - `?tool_code=` on every `/v1/client/users/{user_uuid}/connections/
   {type}` route, so a user can connect to several tools of one type;
   the default tool when omitted.
