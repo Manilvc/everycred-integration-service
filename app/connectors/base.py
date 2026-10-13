@@ -77,6 +77,9 @@ class ConnectorContext:
         tool_config: The tool's ``connector_config`` from the database,
             used by configuration-driven connectors.
         session_values: Values captured by earlier steps of a flow.
+        user_access_token: The signed-in user's access token, for the
+            steps of a flow with ``steps_as_user``; replaces the tool's
+            own authentication.
         http_client: Shared outbound HTTP client with timeouts applied.
     """
 
@@ -90,6 +93,7 @@ class ConnectorContext:
     tool_config: dict[str, Any] | None = field(default=None, repr=False)
     # Values earlier flow steps captured, read as {session.<name>}.
     session_values: dict[str, Any] = field(default_factory=dict, repr=False)
+    user_access_token: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)

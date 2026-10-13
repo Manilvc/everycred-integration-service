@@ -375,6 +375,12 @@ The claims then act as the response data: `capture` copies values for
 later steps, and a flow with no steps reads its `outputs` and
 `verified_when` from them.
 
+The access and refresh tokens are discarded, unless the flow sets
+`steps_as_user`: then the access token authenticates the steps that run
+right after sign-in (Graph `/me`, say), so they can only reach the
+signed-in user's data. It is held in memory for that call only, never
+stored in the session state, the result, or the logs.
+
 Register the redirect URI in two places: in the provider's application
 registration, and in the client's settings for the sign-in tool:
 

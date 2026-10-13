@@ -9,11 +9,15 @@ flow, `entra_sign_in`:
 
 1. The holder signs in with their work account (OpenID Connect,
    authorization code with PKCE). The holder types nothing.
-2. The service takes the directory object id (`oid`) from the ID token
-   and reads that user's profile from Microsoft Graph with the client's
-   app-only token.
-3. The session is `verified` when the account is enabled
-   (`accountEnabled` is `true`), and `not_verified` otherwise.
+2. The service calls Microsoft Graph `GET /me` with **the holder's own
+   access token** (`steps_as_user`), so Microsoft returns that person's
+   profile and nobody else's. The app has no permission to read other
+   users.
+3. The session is `verified` when Graph returns the profile.
+
+The holder's access token is used for that one call, straight after
+sign-in, and is never stored or logged. Only the fields the client
+requests are kept, for the retention period.
 
 ```mermaid
 sequenceDiagram
@@ -29,8 +33,7 @@ sequenceDiagram
     H->>B: GET redirect_uri?state&code
     B->>I: POST /client/sessions/authorization-callback {state, code}
     I->>E: exchange code, check the ID token
-    I->>E: client credentials token for Graph
-    I->>G: GET /users/{oid}?$select=...
+    I->>G: GET /me?$select=... with the holder's access token
     I-->>B: completed, outcome verified
 ```
 
@@ -43,13 +46,16 @@ You need an app registration in the organisation's Entra tenant:
   `https://<backend host>/v1/holder/integration/callback`. The provider
   sends the holder's browser there, not to this service.
 - **Client secret**: create one and note its expiry.
-- **API permissions**: Microsoft Graph *application* permission
-  `User.Read.All`, with admin consent. The sign-in itself needs only
-  the delegated `openid`, `profile` and `email` scopes.
+- **API permissions**: Microsoft Graph *delegated* permissions
+  `openid`, `profile`, `email` and `User.Read` only. Do **not** add the
+  application permission `User.Read.All`: it would let the app read
+  every user in the tenant, which this flow never needs. If your tenant
+  blocks user consent, an admin grants consent for these delegated
+  permissions once.
 
-`User.Read.All` lets the app read any user in the tenant. The flow only
-ever reads the user whose ID token it has just validated, because the
-Graph path takes the id from that token, never from the caller.
+With delegated `User.Read`, the token belongs to the holder who signed
+in and Graph only serves that holder's own profile (`/me`). Neither the
+client backend nor this service can ask for anyone else's data.
 
 ## 1. Define the tool
 
@@ -66,10 +72,12 @@ client fields mapped to them must be mapped again.
 
 The definition:
 
-- `auth` gets an app-only Graph token (`https://graph.microsoft.com/.default`)
-  for the `get_user` step.
-- `authorization` signs the holder in. `issuer` is the tenant's v2.0
-  issuer, so ID tokens from another tenant are rejected.
+- There is no tool-level `auth`: the app never gets a token of its own
+  for Graph.
+- `authorization` signs the holder in with the scope
+  `openid profile email User.Read`, and `steps_as_user: true` sends the
+  `get_me` step with the holder's access token. `issuer` is the
+  tenant's v2.0 issuer, so ID tokens from another tenant are rejected.
   `"prompt": "login"` asks for a fresh sign-in every time; remove it to
   reuse an existing Microsoft session.
 - `response` has no wrapper fields, because Graph returns the object
@@ -78,7 +86,8 @@ The definition:
   `displayName`, `givenName`, `surname`, `mail`, `userPrincipalName`,
   `jobTitle`, `department`, `employeeId`, `mobilePhone`,
   `officeLocation`, `companyName` and `id`. To add one, add it to both
-  `$select` in `get_user` and `fields`.
+  `$select` in `get_me` and `fields`. A property the directory does not
+  hold for the user is simply absent from the result.
 
 ## 2. Store each client's credentials
 
@@ -137,6 +146,7 @@ request's metadata.
 | `422 invalid_redirect_uri` on start | `redirect_uri` is not in the tool's `redirect_uris` setting |
 | Microsoft shows `AADSTS50011` | The redirect URI is not registered on the app registration |
 | Session `failed`, `authorization_declined` | The holder cancelled, or Microsoft returned an error |
-| Session `failed`, `provider_error` | The code exchange or ID token checks failed (wrong tenant, client id or secret), or Graph was unreachable |
-| Session `completed`, `not_verified` | The account is disabled, or Graph refused the read (`provider_rejected`; usually no admin consent for `User.Read.All`) |
+| Session `failed`, `provider_error` | The code exchange or ID token checks failed (wrong tenant, client id or secret), Microsoft returned no access token, or Graph was unreachable |
+| Session `completed`, `not_verified` | Graph refused the read (`provider_rejected`; usually `User.Read` was not consented) |
+| Microsoft shows `AADSTS65001` | The holder or an admin has not consented to the delegated permissions |
 | `409 tool_credentials_missing` | Step 2 was not done for this client |

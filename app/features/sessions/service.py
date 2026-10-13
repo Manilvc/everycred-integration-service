@@ -469,7 +469,7 @@ class SessionService:
             await self.session.commit()
             return self._to_response(integration_session)
 
-        claims = await self._exchange_code(
+        sign_in = await self._exchange_code(
             integration_session,
             client,
             target,
@@ -477,7 +477,7 @@ class SessionService:
             callback.code,
             pending,
         )
-        if claims is not None:
+        if sign_in is not None:
             state.pending_authorization = None
             await self._advance(
                 integration_session,
@@ -485,7 +485,8 @@ class SessionService:
                 target,
                 flow,
                 state,
-                initial_data=claims,
+                initial_data=sign_in.claims,
+                user_access_token=sign_in.access_token,
             )
         await self.session.commit()
         return self._to_response(integration_session)
@@ -787,12 +788,15 @@ class SessionService:
         flow: FlowConfig,
         state: FlowState,
         initial_data: Any = None,
+        user_access_token: str | None = None,
     ) -> None:
         """Run steps from ``current_step`` until paused or finished.
 
         ``initial_data`` is what a completed sign-in returned (the ID
         token claims). Values are captured from it first, and it is the
-        final data of a flow that has no steps.
+        final data of a flow that has no steps. ``user_access_token``
+        is the signed-in user's token for flows with ``steps_as_user``;
+        it only lives for this call and is never put in ``state``.
         """
         if (
             initial_data is not None
@@ -839,6 +843,7 @@ class SessionService:
                 integration_session.user_uuid,
                 credentials=credentials,
                 session_values=state.captured,
+                user_access_token=user_access_token,
             )
             try:
                 outcome = await self._run_step(
@@ -1045,11 +1050,12 @@ class SessionService:
         auth: OAuth2AuthorizationCode,
         code: str,
         pending: dict[str, str],
-    ) -> dict[str, Any] | None:
-        """Redeem the code; return the claims, or None if the session failed.
+    ) -> authorization.SignInResult | None:
+        """Redeem the code; return the sign-in, or None if the session failed.
 
         Runs through :meth:`_run_step` so the exchange is timed out,
-        logged, and its errors mapped like any provider operation.
+        logged, and its errors mapped like any provider operation. The
+        access token stays out of the step's outcome, which is logged.
         """
         try:
             credentials = await self.targets.load_credentials(
@@ -1069,8 +1075,10 @@ class SessionService:
             "settings": target.settings,
         }
 
+        redeemed: list[authorization.SignInResult] = []
+
         async def exchange(operation: str) -> OperationOutcome:
-            claims = await authorization.exchange_code(
+            sign_in = await authorization.exchange_code(
                 self.targets.http_client,
                 auth,
                 values,
@@ -1080,10 +1088,11 @@ class SessionService:
                 nonce=pending["nonce"],
                 timeout_seconds=self.settings.connector_timeout_seconds,
             )
-            return OperationOutcome(success=True, data=claims)
+            redeemed.append(sign_in)
+            return OperationOutcome(success=True, data=sign_in.claims)
 
         try:
-            outcome = await self._run_step(
+            await self._run_step(
                 integration_session,
                 client,
                 target,
@@ -1094,7 +1103,7 @@ class SessionService:
         except StepFailedError as failure:
             await self._fail(integration_session, failure)
             return None
-        return outcome.data
+        return redeemed[0]
 
     async def _capture(
         self,

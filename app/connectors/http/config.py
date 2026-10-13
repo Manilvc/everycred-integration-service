@@ -318,8 +318,9 @@ class OAuth2AuthorizationCode(BaseModel):
     pauses as ``awaiting_redirect``, and resumes when the client relays
     the provider's ``code`` and ``state``. The code is exchanged here
     with the PKCE verifier, and the ID token's claims become the data
-    later steps and ``outputs`` read. Access and refresh tokens are
-    discarded immediately; nothing is kept beyond the claims.
+    later steps and ``outputs`` read. Refresh tokens are discarded
+    immediately, and so is the access token unless ``steps_as_user``
+    asks for it; nothing is stored beyond the claims.
 
     Attributes:
         authorize_url: Authorization endpoint. Fixed host; the path may
@@ -336,6 +337,12 @@ class OAuth2AuthorizationCode(BaseModel):
             e.g. ``{"prompt": "login"}`` to force a fresh sign-in.
         capture: Session values to keep from the claims, as
             ``name -> dot path``, for later steps.
+        steps_as_user: Run the flow's steps with the signed-in user's
+            access token instead of the tool's ``auth``, so the provider
+            itself limits them to that user's data (Microsoft Graph
+            ``/me`` with the delegated ``User.Read`` scope, say). The
+            token is used by the steps that run right after sign-in and
+            is never stored, so those steps may not wait for inputs.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -350,6 +357,7 @@ class OAuth2AuthorizationCode(BaseModel):
     client_auth: Literal["body", "basic"] = "body"
     extra_params: dict[str, str] = Field(default_factory=dict, max_length=10)
     capture: dict[str, str] = Field(default_factory=dict, max_length=20)
+    steps_as_user: bool = False
 
     @model_validator(mode="after")
     def check_fields(self) -> "OAuth2AuthorizationCode":
@@ -485,6 +493,13 @@ class FlowConfig(BaseModel):
             raise ValueError("a gather flow must declare outputs")
         if self.purpose == "gather" and self.verified_when:
             raise ValueError("verified_when applies to verification flows")
+        if self.authorization and self.authorization.steps_as_user:
+            if not self.steps:
+                raise ValueError("steps_as_user needs at least one step")
+            if self.all_inputs():
+                # The user's token is never stored, so a step that
+                # pauses for inputs would resume without it.
+                raise ValueError("steps_as_user flows may not take inputs")
         return self
 
     def all_inputs(self) -> list[str]:

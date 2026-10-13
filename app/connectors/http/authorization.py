@@ -15,7 +15,7 @@ import hmac
 import logging
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
 
@@ -95,6 +95,20 @@ def build_authorization_url(
     return f"{base_url}?{urlencode(query)}"
 
 
+@dataclass(frozen=True, slots=True)
+class SignInResult:
+    """What a redeemed code yields.
+
+    Attributes:
+        claims: The ID token's validated claims.
+        access_token: The user's access token, only when the flow runs
+            its steps as the user; never logged or stored.
+    """
+
+    claims: dict[str, Any]
+    access_token: str | None = field(default=None, repr=False)
+
+
 async def exchange_code(
     http_client: httpx.AsyncClient,
     auth: OAuth2AuthorizationCode,
@@ -105,8 +119,10 @@ async def exchange_code(
     code_verifier: str,
     nonce: str,
     timeout_seconds: float,
-) -> dict[str, Any]:
-    """Redeem ``code`` and return the ID token's validated claims.
+) -> SignInResult:
+    """Redeem ``code``; return the ID token's validated claims.
+
+    The access token is kept only when ``auth.steps_as_user`` is set.
 
     Raises:
         MissingParametersError: A credential or setting is missing.
@@ -152,23 +168,32 @@ async def exchange_code(
             f"The identity provider returned HTTP {response.status_code}."
         )
     try:
-        id_token = response.json()["id_token"]
+        tokens = response.json()
+        id_token = tokens["id_token"]
     except (ValueError, KeyError, TypeError) as exc:
         raise ConnectorError(
             "The identity provider returned no ID token."
         ) from exc
+    access_token = None
+    if auth.steps_as_user:
+        access_token = tokens.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            raise ConnectorError(
+                "The identity provider returned no access token."
+            )
 
     expected_issuer = (
         str(render(auth.issuer, url_encode_values(values)))
         if auth.issuer
         else None
     )
-    return validate_id_token(
+    claims = validate_id_token(
         str(id_token),
         client_id=client_id,
         nonce=nonce,
         issuer=expected_issuer,
     )
+    return SignInResult(claims=claims, access_token=access_token)
 
 
 def validate_id_token(

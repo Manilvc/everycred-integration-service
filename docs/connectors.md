@@ -226,6 +226,15 @@ ID token's claims as data:
 - Set `issuer` whenever the provider has a fixed one; without it the
   `iss` claim is not checked.
 - Credentials the sign-in uses count as the tool's required credentials.
+- `"steps_as_user": true` runs the flow's steps with the signed-in
+  user's access token instead of the tool's `auth` or auth headers, so
+  the provider limits them to that user's own data (Microsoft Graph
+  `GET /me` with the delegated `User.Read` scope, say). Prefer it to an
+  app-wide permission such as `User.Read.All`. The token is used only by
+  the steps that run right after sign-in and is never stored, so the
+  flow needs at least one step and its steps may not take inputs. Add
+  the provider's scope for those steps to `scope`. See
+  `docs/examples/microsoft-entra-id-tool.json`.
 
 The client must register its redirect URI with the provider and in its
 `redirect_uris` setting; see

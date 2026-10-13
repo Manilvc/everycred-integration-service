@@ -25,6 +25,13 @@
 
 ### Added
 
+- Sign-in flows can set `authorization.steps_as_user`: their steps call
+  the provider with the signed-in user's access token, so a flow reads
+  only that user's data (Graph `/me` with delegated `User.Read`) and
+  needs no app-wide permission. The token is never stored or logged.
+- `docs/examples/microsoft-entra-id-tool.json` and
+  `docs/integrations/microsoft-entra-id.md`: Entra ID sign-in that reads
+  the holder's own profile.
 - Connection URLs take a tool code or id:
   `/v1/client/users/{user_uuid}/connections/surepass`. A tool serving
   several of the client's types needs `?integration_type=`. Type codes

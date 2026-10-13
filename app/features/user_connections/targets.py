@@ -209,6 +209,7 @@ class IntegrationTargetResolver:
         *,
         credentials: dict[str, Any] | None = None,
         session_values: dict[str, Any] | None = None,
+        user_access_token: str | None = None,
     ) -> IntegrationConnector:
         """Instantiate the connector with the client's credentials.
 
@@ -219,6 +220,8 @@ class IntegrationTargetResolver:
             credentials: Already-loaded credentials, to avoid reading the
                 secret store again for every step of a flow.
             session_values: Values captured by earlier flow steps.
+            user_access_token: The signed-in user's token, for flows
+                that run their steps as the user.
         """
         if credentials is None:
             credentials = await self.load_credentials(client, target.tool)
@@ -233,6 +236,7 @@ class IntegrationTargetResolver:
                 credentials=credentials,
                 tool_config=target.tool.connector_config,
                 session_values=session_values or {},
+                user_access_token=user_access_token,
             )
         )
 

@@ -1,28 +1,29 @@
 {
   "name": "Microsoft Entra ID",
   "provider": "Microsoft",
-  "description": "Work account sign-in, then the signed-in user's profile from Microsoft Graph",
+  "description": "Work account sign-in, then the signed-in user's own profile from Microsoft Graph",
   "is_active": true,
-  "integration_types": ["confirm"],
+  "integration_types": [
+    "confirm"
+  ],
   "connector_config": {
     "type": "http",
-    "environments": {"production": "https://graph.microsoft.com/v1.0"},
-    "default_environment": "production",
-    "auth": {
-      "type": "oauth2_client_credentials",
-      "token_url": "https://login.microsoftonline.com/{credentials.tenant_id}/oauth2/v2.0/token",
-      "client_id": "{credentials.client_id}",
-      "client_secret": "{credentials.client_secret}",
-      "scope": "https://graph.microsoft.com/.default"
+    "environments": {
+      "production": "https://graph.microsoft.com/v1.0"
     },
-    "response": {"success_field": null, "data_field": null, "message_field": null},
+    "default_environment": "production",
+    "response": {
+      "success_field": null,
+      "data_field": null,
+      "message_field": null
+    },
     "operations": {
-      "get_user": {
+      "get_me": {
         "method": "GET",
-        "path": "/users/{session.directory_id}",
-        "description": "Read the signed-in user's directory profile",
+        "path": "/me",
+        "description": "Read the signed-in user's own profile with their token",
         "query": {
-          "$select": "id,accountEnabled,displayName,givenName,surname,mail,userPrincipalName,jobTitle,department,employeeId,mobilePhone,officeLocation,companyName"
+          "$select": "id,displayName,givenName,surname,mail,userPrincipalName,jobTitle,department,employeeId,mobilePhone,officeLocation,companyName"
         }
       }
     },
@@ -36,11 +37,20 @@
           "issuer": "https://login.microsoftonline.com/{credentials.tenant_id}/v2.0",
           "client_id": "{credentials.client_id}",
           "client_secret": "{credentials.client_secret}",
-          "scope": "openid profile email",
-          "extra_params": {"prompt": "login"},
-          "capture": {"directory_id": "oid"}
+          "scope": "openid profile email User.Read",
+          "extra_params": {
+            "prompt": "login"
+          },
+          "capture": {
+            "directory_id": "oid"
+          },
+          "steps_as_user": true
         },
-        "steps": [{"operation": "get_user"}],
+        "steps": [
+          {
+            "operation": "get_me"
+          }
+        ],
         "outputs": {
           "full_name": "displayName",
           "email": "mail",
@@ -49,22 +59,74 @@
           "employee_id": "employeeId",
           "directory_id": "session.directory_id"
         },
-        "verified_when": [{"path": "accountEnabled", "equals": true}]
+        "verified_when": [
+          {
+            "path": "id"
+          }
+        ]
       }
     }
   },
   "fields": [
-    {"flow": "entra_sign_in", "key": "displayName", "label": "Full name"},
-    {"flow": "entra_sign_in", "key": "givenName", "label": "First name"},
-    {"flow": "entra_sign_in", "key": "surname", "label": "Last name"},
-    {"flow": "entra_sign_in", "key": "mail", "label": "Work email"},
-    {"flow": "entra_sign_in", "key": "userPrincipalName", "label": "Sign-in name"},
-    {"flow": "entra_sign_in", "key": "jobTitle", "label": "Job title"},
-    {"flow": "entra_sign_in", "key": "department", "label": "Department"},
-    {"flow": "entra_sign_in", "key": "employeeId", "label": "Employee ID"},
-    {"flow": "entra_sign_in", "key": "mobilePhone", "label": "Mobile phone"},
-    {"flow": "entra_sign_in", "key": "officeLocation", "label": "Office location"},
-    {"flow": "entra_sign_in", "key": "companyName", "label": "Company"},
-    {"flow": "entra_sign_in", "key": "id", "label": "Directory object id"}
+    {
+      "flow": "entra_sign_in",
+      "key": "displayName",
+      "label": "Full name"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "givenName",
+      "label": "First name"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "surname",
+      "label": "Last name"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "mail",
+      "label": "Work email"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "userPrincipalName",
+      "label": "Sign-in name"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "jobTitle",
+      "label": "Job title"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "department",
+      "label": "Department"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "employeeId",
+      "label": "Employee ID"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "mobilePhone",
+      "label": "Mobile phone"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "officeLocation",
+      "label": "Office location"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "companyName",
+      "label": "Company"
+    },
+    {
+      "flow": "entra_sign_in",
+      "key": "id",
+      "label": "Directory object id"
+    }
   ]
 }
