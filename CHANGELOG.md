@@ -4,6 +4,11 @@
 
 ### Breaking
 
+- User connections are per tool. `user_integration_connections` is
+  unique per (client, user, type, tool) instead of per type (migration
+  `4c7d2e9b1a58` assigns existing connections their routed tool), and
+  `DELETE /v1/client/users/{user_uuid}/connections/{type}` removes only
+  one tool's connection.
 - Settings sent to `PUT /v1/clients/{client_id}/integrations/{type}`
   with a `tool_code` now belong to that tool only, not to the type, so
   each tool keeps its own `environment`. `PUT /v1/client/integrations/
@@ -20,6 +25,9 @@
 
 ### Added
 
+- `?tool_code=` on every `/v1/client/users/{user_uuid}/connections/
+  {type}` route, so a user can connect to several tools of one type;
+  the default tool when omitted.
 - Several tools per integration type for a client. The routing call
   takes `is_default` (default `true`); `false` adds a tool without
   changing the default. Its response lists every configured tool in

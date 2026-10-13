@@ -47,6 +47,9 @@ from app.features.clients.repository import (
     ClientIntegrationConfigRepository,
     ClientToolCredentialRepository,
 )
+from app.features.integration_tools.exceptions import (
+    IntegrationToolNotFoundError,
+)
 from app.features.integration_tools.models import IntegrationTool
 from app.features.integration_tools.repository import (
     IntegrationToolRepository,
@@ -95,17 +98,22 @@ TIMEOUT_MESSAGE = "The integration did not respond in time."
 
 
 def connection_secret_name(
-    client_id: uuid.UUID, user_uuid: uuid.UUID, integration_type_code: str
+    client_id: uuid.UUID,
+    user_uuid: uuid.UUID,
+    integration_type_code: str,
+    tool_code: str | None = None,
 ) -> str:
     """Return the secret store name for one user's connection inputs.
 
-    Deterministic, so saving again for the same user and type reuses the
-    secret instead of creating another.
+    Deterministic, so saving again for the same user and tool reuses
+    the secret instead of creating another. Inputs saved while the type
+    had no tool use the type's name alone.
     """
-    return (
+    name = (
         f"clients/{client_id}/users/{user_uuid}/connections/"
         f"{integration_type_code}"
     )
+    return f"{name}/{tool_code}" if tool_code else name
 
 
 class UserConnectionService:
@@ -146,6 +154,7 @@ class UserConnectionService:
         self.secret_store = secret_store
         self.http_client = http_client
         self.settings = settings
+        self.tools = IntegrationToolRepository(session)
         self.targets = IntegrationTargetResolver(
             integration_types=integration_types,
             client_configs=client_configs,
@@ -154,7 +163,7 @@ class UserConnectionService:
             secret_store=secret_store,
             registry=registry,
             http_client=http_client,
-            tools=IntegrationToolRepository(session),
+            tools=self.tools,
         )
 
     async def list_connections(
@@ -182,7 +191,7 @@ class UserConnectionService:
         config_rows = await self.client_configs.list_with_types(
             client.id, usable_only=False
         )
-        tool_by_type_id = {
+        default_tool_by_type_id = {
             integration_type.id: config.integration_tool
             for config, integration_type in config_rows
         }
@@ -190,30 +199,40 @@ class UserConnectionService:
             self._to_response(
                 connection,
                 integration_type,
-                tool_by_type_id.get(integration_type.id),
+                connection.integration_tool
+                or default_tool_by_type_id.get(integration_type.id),
             )
             for connection, integration_type in rows
         ]
 
     async def get_connection(
-        self, client: Client, user_uuid: uuid.UUID, integration_type_code: str
+        self,
+        client: Client,
+        user_uuid: uuid.UUID,
+        integration_type_code: str,
+        tool_code: str | None = None,
     ) -> UserConnectionResponse:
-        """Return one connection.
+        """Return the user's connection to one tool of a type.
+
+        Args:
+            client: The calling client.
+            user_uuid: The client's id for the user.
+            integration_type_code: Integration type code.
+            tool_code: Tool of the type to use; the type's default
+                tool when None.
 
         Raises:
             IntegrationTypeNotFoundError: Unknown integration type.
+            IntegrationToolNotFoundError: ``tool_code`` does not serve
+                the type.
             ConnectionNotFoundError: The user has no such connection.
         """
-        integration_type = await self._get_integration_type(
-            integration_type_code
+        integration_type, tool, is_default = await self._locate(
+            client, integration_type_code, tool_code
         )
         connection = await self._get_connection_or_raise(
-            client, user_uuid, integration_type
+            client, user_uuid, integration_type, tool, is_default=is_default
         )
-        client_config = await self.client_configs.get(
-            client.id, integration_type.id
-        )
-        tool = client_config.integration_tool if client_config else None
         return self._to_response(connection, integration_type, tool)
 
     async def save_parameters(
@@ -222,6 +241,7 @@ class UserConnectionService:
         user_uuid: uuid.UUID,
         integration_type_code: str,
         parameters: ConnectionParameters,
+        tool_code: str | None = None,
     ) -> UserConnectionResponse:
         """Save the user's inputs, then connect with them straight away.
 
@@ -233,9 +253,15 @@ class UserConnectionService:
         ``pending`` only when the type has no tool to connect through
         yet: none chosen, switched off, or without a connector.
 
+        Each tool of a type has its own connection, so connecting to
+        one never replaces another. ``tool_code`` picks the tool; the
+        type's default tool when None.
+
         Raises:
             IntegrationTypeNotFoundError: Unknown integration type.
             IntegrationNotEnabledError: The client has not enabled it.
+            IntegrationToolNotFoundError: ``tool_code`` does not serve
+                the type.
             InvalidConnectionParametersError: The chosen tool has a
                 Python connector and the inputs do not fit its signature.
             SecretStoreError: The secret store could not be written.
@@ -243,7 +269,10 @@ class UserConnectionService:
         integration_type, client_config = await self._get_enabled_integration(
             client, integration_type_code
         )
-        tool = client_config.integration_tool
+        tool = await self._tool_for(integration_type, client_config, tool_code)
+        is_default = (
+            tool is None or tool.id == client_config.integration_tool_id
+        )
         connector_class = (
             resolve_connector(tool.code, tool.connector_config, self.registry)
             if tool
@@ -258,19 +287,23 @@ class UserConnectionService:
             )
 
         inputs = parameters.model_dump()
-        connection = await self.connections.get(
-            client.id, user_uuid, integration_type.id
+        connection = await self._find_connection(
+            client, user_uuid, integration_type, tool, is_default=is_default
         )
         if connection is None:
             reference = await self.secret_store.create(
                 connection_secret_name(
-                    client.id, user_uuid, integration_type.code
+                    client.id,
+                    user_uuid,
+                    integration_type.code,
+                    tool.code if tool else None,
                 ),
                 inputs,
                 tags={
                     "client_id": str(client.id),
                     "user_uuid": str(user_uuid),
                     "integration_type": integration_type.code,
+                    "tool_code": tool.code if tool else "",
                     "purpose": "user-connection",
                 },
             )
@@ -278,6 +311,7 @@ class UserConnectionService:
                 client_id=client.id,
                 user_uuid=user_uuid,
                 integration_type_id=integration_type.id,
+                integration_tool_id=tool.id if tool else None,
                 parameters_secret_reference=reference,
             )
             self.connections.add(connection)
@@ -304,14 +338,17 @@ class UserConnectionService:
             ) from exc
 
         logger.info(
-            "Saved %s connection inputs for user %s of client %s",
+            "Saved %s/%s connection inputs for user %s of client %s",
             integration_type_code,
+            tool.code if tool else None,
             user_uuid,
             client.id,
         )
 
         try:
-            target = await self._get_callable(client, integration_type_code)
+            target = await self._get_callable(
+                client, integration_type_code, tool.code if tool else None
+            )
         except AppError as exc:
             # Nothing to connect through yet; the inputs are kept for
             # when the client finishes setting the tool up.
@@ -345,7 +382,11 @@ class UserConnectionService:
         )
 
     async def connect(
-        self, client: Client, user_uuid: uuid.UUID, integration_type_code: str
+        self,
+        client: Client,
+        user_uuid: uuid.UUID,
+        integration_type_code: str,
+        tool_code: str | None = None,
     ) -> UserConnectionResponse:
         """Run the tool's connector with the user's saved inputs.
 
@@ -355,8 +396,11 @@ class UserConnectionService:
         Raises:
             IntegrationTypeNotFoundError: Unknown integration type.
             IntegrationNotEnabledError: The client has not enabled it.
-            ConnectionNotFoundError: No inputs were saved yet.
-            IntegrationToolNotSelectedError: No tool chosen for the type.
+            ConnectionNotFoundError: No inputs were saved for the tool.
+            IntegrationToolNotSelectedError: No tool named and no
+                default chosen for the type.
+            IntegrationToolNotFoundError: ``tool_code`` does not serve
+                the type.
             IntegrationToolInactiveError: The chosen tool is inactive.
             ConnectorNotAvailableError: The tool has no connector yet.
             InvalidConnectionParametersError: Saved inputs do not fit.
@@ -364,9 +408,15 @@ class UserConnectionService:
             ToolCredentialsMissingError: Credentials are not stored.
             ConnectionFailedError: The connector failed or timed out.
         """
-        target = await self._get_callable(client, integration_type_code)
+        target = await self._get_callable(
+            client, integration_type_code, tool_code
+        )
         connection = await self._get_connection_or_raise(
-            client, user_uuid, target.integration_type
+            client,
+            user_uuid,
+            target.integration_type,
+            target.tool,
+            is_default=target.is_default_tool,
         )
         inputs = await self.secret_store.read(
             connection.parameters_secret_reference
@@ -398,6 +448,7 @@ class UserConnectionService:
         integration_type_code: str,
         operation: str,
         request: OperationRequest,
+        tool_code: str | None = None,
     ) -> OperationResultResponse:
         """Run a named operation of the tool for one of the client's users.
 
@@ -409,8 +460,12 @@ class UserConnectionService:
         Raises:
             IntegrationTypeNotFoundError: Unknown integration type.
             IntegrationNotEnabledError: The client has not enabled it.
-            ConnectionNotFoundError: The user has no saved connection.
-            IntegrationToolNotSelectedError: No tool chosen for the type.
+            ConnectionNotFoundError: The user has no saved connection to
+                the tool.
+            IntegrationToolNotSelectedError: No tool named and no
+                default chosen for the type.
+            IntegrationToolNotFoundError: ``tool_code`` does not serve
+                the type.
             IntegrationToolInactiveError: The chosen tool is inactive.
             ConnectorNotAvailableError: The tool has no connector yet.
             OperationNotFoundError: The tool has no such operation.
@@ -418,9 +473,15 @@ class UserConnectionService:
             ToolCredentialsMissingError: Credentials are not stored.
             OperationFailedError: The provider failed or timed out.
         """
-        target = await self._get_callable(client, integration_type_code)
+        target = await self._get_callable(
+            client, integration_type_code, tool_code
+        )
         connection = await self._get_connection_or_raise(
-            client, user_uuid, target.integration_type
+            client,
+            user_uuid,
+            target.integration_type,
+            target.tool,
+            is_default=target.is_default_tool,
         )
         saved = await self.secret_store.read(
             connection.parameters_secret_reference
@@ -489,19 +550,27 @@ class UserConnectionService:
         )
 
     async def delete_connection(
-        self, client: Client, user_uuid: uuid.UUID, integration_type_code: str
+        self,
+        client: Client,
+        user_uuid: uuid.UUID,
+        integration_type_code: str,
+        tool_code: str | None = None,
     ) -> None:
-        """Remove the connection, then schedule its secret's deletion.
+        """Remove one tool's connection, then delete its secret.
+
+        Other tools' connections of the same type are kept.
 
         Raises:
             IntegrationTypeNotFoundError: Unknown integration type.
+            IntegrationToolNotFoundError: ``tool_code`` does not serve
+                the type.
             ConnectionNotFoundError: The user has no such connection.
         """
-        integration_type = await self._get_integration_type(
-            integration_type_code
+        integration_type, tool, is_default = await self._locate(
+            client, integration_type_code, tool_code
         )
         connection = await self._get_connection_or_raise(
-            client, user_uuid, integration_type
+            client, user_uuid, integration_type, tool, is_default=is_default
         )
         reference = connection.parameters_secret_reference
         await self.connections.delete(connection)
@@ -663,18 +732,85 @@ class UserConnectionService:
         return await self.targets.enabled_integration(client, code)
 
     async def _get_callable(
-        self, client: Client, code: str
+        self, client: Client, code: str, tool_code: str | None
     ) -> IntegrationTarget:
-        return await self.targets.resolve(client, code)
+        return await self.targets.resolve(client, code, tool_code)
+
+    async def _tool_for(
+        self,
+        integration_type: IntegrationType,
+        client_config: ClientIntegrationConfig | None,
+        tool_code: str | None,
+    ) -> IntegrationTool | None:
+        """Return the named tool, or the type's default when None."""
+        if tool_code is None:
+            return client_config.integration_tool if client_config else None
+        tool = await self.tools.get_by_code(tool_code)
+        if tool is None or not tool.serves(integration_type.id):
+            # Same answer for both, so the catalogue is not exposed.
+            raise IntegrationToolNotFoundError(tool_code)
+        return tool
+
+    async def _locate(
+        self, client: Client, integration_type_code: str, tool_code: str | None
+    ) -> tuple[IntegrationType, IntegrationTool | None, bool]:
+        """Return the type, the tool, and whether it is the default.
+
+        Reading and deleting work even when the type has since been
+        disabled, so the client can still clean up.
+        """
+        integration_type = await self._get_integration_type(
+            integration_type_code
+        )
+        client_config = await self.client_configs.get(
+            client.id, integration_type.id
+        )
+        tool = await self._tool_for(integration_type, client_config, tool_code)
+        default_tool_id = (
+            client_config.integration_tool_id if client_config else None
+        )
+        is_default = tool is None or tool.id == default_tool_id
+        return integration_type, tool, is_default
+
+    async def _find_connection(
+        self,
+        client: Client,
+        user_uuid: uuid.UUID,
+        integration_type: IntegrationType,
+        tool: IntegrationTool | None,
+        *,
+        is_default: bool,
+    ) -> UserIntegrationConnection | None:
+        """Return the user's connection to ``tool``.
+
+        The default tool also takes over inputs saved while the type had
+        no tool, so they are not lost when a tool is chosen later.
+        """
+        connection = await self.connections.get(
+            client.id,
+            user_uuid,
+            integration_type.id,
+            tool.id if tool else None,
+        )
+        if connection is None and tool is not None and is_default:
+            connection = await self.connections.get(
+                client.id, user_uuid, integration_type.id, None
+            )
+            if connection is not None:
+                connection.integration_tool = tool
+        return connection
 
     async def _get_connection_or_raise(
         self,
         client: Client,
         user_uuid: uuid.UUID,
         integration_type: IntegrationType,
+        tool: IntegrationTool | None,
+        *,
+        is_default: bool,
     ) -> UserIntegrationConnection:
-        connection = await self.connections.get(
-            client.id, user_uuid, integration_type.id
+        connection = await self._find_connection(
+            client, user_uuid, integration_type, tool, is_default=is_default
         )
         if connection is None:
             raise ConnectionNotFoundError(integration_type.code)

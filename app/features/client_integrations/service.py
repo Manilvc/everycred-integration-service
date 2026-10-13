@@ -273,10 +273,9 @@ class ClientIntegrationService:
 
         Each group lists the type's default tool, every other tool the
         client's users can use for an enabled type, and built-in tools.
-        A user connection belongs to the type and runs through its
-        default tool, so only that tool shows the user's connection.
-        Works for users this service has never seen: they are simply
-        not connected yet.
+        Each tool shows the user's own connection to it. Works for
+        users this service has never seen: they are simply not
+        connected yet.
 
         Args:
             client: The calling client.
@@ -287,8 +286,10 @@ class ClientIntegrationService:
                 types when empty or None.
         """
         catalogue = await self._load_catalogue(client)
-        connection_by_type_id = {
-            connection.integration_type_id: connection
+        connection_by_type_and_tool = {
+            (connection.integration_type_id, connection.integration_tool_id): (
+                connection
+            )
             for connection, _ in await self.user_connections.list_for_user(
                 client.id, user_uuid
             )
@@ -306,10 +307,11 @@ class ClientIntegrationService:
                 self._to_user_system(
                     state,
                     integration_type,
-                    (
-                        connection_by_type_id.get(integration_type.id)
-                        if state.tool.id == chosen_tool_id or state.is_built_in
-                        else None
+                    self._user_connection_for(
+                        connection_by_type_and_tool,
+                        integration_type,
+                        state.tool,
+                        is_default=state.tool.id == chosen_tool_id,
                     ),
                     is_default=(
                         state.is_built_in or state.tool.id == chosen_tool_id
@@ -698,6 +700,27 @@ class ClientIntegrationService:
                 state.connection.last_tested_at if state.connection else None
             ),
         )
+
+    @staticmethod
+    def _user_connection_for(
+        connection_by_type_and_tool: dict[
+            tuple[uuid.UUID, uuid.UUID | None], UserIntegrationConnection
+        ],
+        integration_type: IntegrationType,
+        tool: IntegrationTool,
+        *,
+        is_default: bool,
+    ) -> UserIntegrationConnection | None:
+        connection = connection_by_type_and_tool.get(
+            (integration_type.id, tool.id)
+        )
+        if connection is None and is_default:
+            # Inputs saved while the type had no tool belong to the
+            # tool that became its default.
+            connection = connection_by_type_and_tool.get(
+                (integration_type.id, None)
+            )
+        return connection
 
     @staticmethod
     def _to_user_system(

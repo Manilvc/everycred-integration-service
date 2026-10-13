@@ -16,6 +16,7 @@ from app.features.clients.dependencies import (
     CurrentClient,
     get_current_client,
 )
+from app.features.integration_tools.models import TOOL_CODE_MAX_LENGTH
 from app.features.integration_types.models import CODE_MAX_LENGTH
 from app.features.user_connections.dependencies import (
     UserConnectionServiceDep,
@@ -49,6 +50,18 @@ router = APIRouter(
 IntegrationTypeCode = Annotated[
     str, Path(min_length=1, max_length=CODE_MAX_LENGTH)
 ]
+ToolCode = Annotated[
+    str | None,
+    Query(
+        min_length=1,
+        max_length=TOOL_CODE_MAX_LENGTH,
+        description=(
+            "Tool of the type, when it has several (e.g. `surepass`). "
+            "Each tool has its own connection. The type's default tool "
+            "when omitted."
+        ),
+    ),
+]
 
 _TYPE_ERRORS = {
     status.HTTP_403_FORBIDDEN: {
@@ -57,7 +70,7 @@ _TYPE_ERRORS = {
     },
     status.HTTP_404_NOT_FOUND: {
         "model": ErrorResponse,
-        "description": "Unknown integration type or no connection",
+        "description": "Unknown integration type or tool, or no connection",
     },
 }
 
@@ -105,10 +118,11 @@ async def get_user_connection(
     integration_type_code: IntegrationTypeCode,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
+    tool_code: ToolCode = None,
 ) -> UserConnectionResponse:
-    """Return one connection, with parameter values hidden."""
+    """Return the connection to one tool, with parameter values hidden."""
     return await service.get_connection(
-        current_client, user_uuid, integration_type_code
+        current_client, user_uuid, integration_type_code, tool_code
     )
 
 
@@ -130,6 +144,7 @@ async def save_user_connection(
     parameters: ConnectionParameters,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
+    tool_code: ToolCode = None,
 ) -> UserConnectionResponse:
     """Store ``args`` and ``kwargs``, encrypted, and connect with them.
 
@@ -138,9 +153,16 @@ async def save_user_connection(
     in `last_error` (the parameters are still saved). It stays `pending`
     only when the type has no usable tool yet. The connect endpoint
     retries with the saved parameters.
+
+    Each tool has its own connection: `?tool_code=surepass` and
+    `?tool_code=entra-id-signin` are kept side by side.
     """
     return await service.save_parameters(
-        current_client, user_uuid, integration_type_code, parameters
+        current_client,
+        user_uuid,
+        integration_type_code,
+        parameters,
+        tool_code,
     )
 
 
@@ -169,6 +191,7 @@ async def connect_user(
     integration_type_code: IntegrationTypeCode,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
+    tool_code: ToolCode = None,
 ) -> UserConnectionResponse:
     """Run the connector as ``connect(*args, **kwargs)``.
 
@@ -176,7 +199,7 @@ async def connect_user(
     status ``failed`` and a ``last_error`` explaining why.
     """
     return await service.connect(
-        current_client, user_uuid, integration_type_code
+        current_client, user_uuid, integration_type_code, tool_code
     )
 
 
@@ -217,8 +240,9 @@ async def run_user_operation(
     request: OperationRequest,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
+    tool_code: ToolCode = None,
 ) -> OperationResultResponse:
-    """Call the tool the client uses for this type, for this user.
+    """Call a tool of this type for this user.
 
     The service loads the user's saved inputs and the client's tool
     credentials from the secret store, merges the `kwargs` sent here on
@@ -231,7 +255,12 @@ async def run_user_operation(
     made or completed.
     """
     return await service.run_operation(
-        current_client, user_uuid, integration_type_code, operation, request
+        current_client,
+        user_uuid,
+        integration_type_code,
+        operation,
+        request,
+        tool_code,
     )
 
 
@@ -246,8 +275,9 @@ async def delete_user_connection(
     integration_type_code: IntegrationTypeCode,
     current_client: CurrentClient,
     service: UserConnectionServiceDep,
+    tool_code: ToolCode = None,
 ) -> None:
-    """Remove the connection and its stored parameters."""
+    """Remove one tool's connection and its stored parameters."""
     await service.delete_connection(
-        current_client, user_uuid, integration_type_code
+        current_client, user_uuid, integration_type_code, tool_code
     )

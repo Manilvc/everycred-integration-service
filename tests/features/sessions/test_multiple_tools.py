@@ -255,3 +255,143 @@ async def test_user_listing_shows_every_usable_tool(
     assert systems["acme-identity"]["is_default"] is True
     assert systems["beta-identity"]["is_default"] is False
     assert systems["beta-identity"]["is_active"] is True
+
+
+def connection_url(code: str = "confirm", action: str = "") -> str:
+    base = f"/v1/client/users/{USER}/connections/{code}"
+    return f"{base}/{action}" if action else base
+
+
+async def save_connection(
+    client: AsyncClient,
+    setup: dict[str, Any],
+    tool_code: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    return await client.put(
+        connection_url(),
+        params={"tool_code": tool_code} if tool_code else None,
+        json={"kwargs": kwargs},
+        headers=setup["key"],
+    )
+
+
+async def test_user_connects_to_each_tool_separately(
+    client: AsyncClient, two_tools: dict[str, Any]
+) -> None:
+    default = await save_connection(client, two_tools, id_number=AADHAAR)
+    beta = await save_connection(
+        client, two_tools, "beta-identity", id_number=AADHAAR
+    )
+
+    assert default.status_code == 200, default.text
+    assert beta.status_code == 200, beta.text
+    assert default.json()["id"] != beta.json()["id"]
+    assert default.json()["integration_tool"]["code"] == "acme-identity"
+    assert beta.json()["integration_tool"]["code"] == "beta-identity"
+    # Each connection ran on its own tool's environment.
+    assert default.json()["connection_details"] == {"environment": "sandbox"}
+    assert beta.json()["connection_details"] == {"environment": "live"}
+
+    listed = await client.get(
+        f"/v1/client/users/{USER}/connections", headers=two_tools["key"]
+    )
+    tools = [item["integration_tool"]["code"] for item in listed.json()]
+    assert sorted(tools) == ["acme-identity", "beta-identity"]
+
+
+async def test_connection_to_one_tool_is_read_and_deleted_alone(
+    client: AsyncClient, two_tools: dict[str, Any]
+) -> None:
+    await save_connection(client, two_tools, id_number=AADHAAR)
+    await save_connection(
+        client, two_tools, "beta-identity", id_number=AADHAAR
+    )
+    beta = {"tool_code": "beta-identity"}
+
+    read = await client.get(
+        connection_url(), params=beta, headers=two_tools["key"]
+    )
+    deleted = await client.delete(
+        connection_url(), params=beta, headers=two_tools["key"]
+    )
+    gone = await client.get(
+        connection_url(), params=beta, headers=two_tools["key"]
+    )
+    kept = await client.get(connection_url(), headers=two_tools["key"])
+
+    assert read.json()["integration_tool"]["code"] == "beta-identity"
+    assert deleted.status_code == 204
+    assert gone.status_code == 404
+    assert kept.json()["integration_tool"]["code"] == "acme-identity"
+
+
+async def test_reconnect_uses_the_named_tool(
+    client: AsyncClient, two_tools: dict[str, Any]
+) -> None:
+    await save_connection(
+        client, two_tools, "beta-identity", id_number=AADHAAR
+    )
+
+    without_default = await client.post(
+        connection_url(action="connect"), headers=two_tools["key"]
+    )
+    named = await client.post(
+        connection_url(action="connect"),
+        params={"tool_code": "beta-identity"},
+        headers=two_tools["key"],
+    )
+
+    # The default tool has no saved inputs for this user yet.
+    assert without_default.status_code == 404
+    assert named.status_code == 200, named.text
+    assert named.json()["status"] == "connected"
+
+
+async def test_user_listing_shows_each_tools_connection(
+    client: AsyncClient, two_tools: dict[str, Any]
+) -> None:
+    await save_connection(
+        client, two_tools, "beta-identity", id_number=AADHAAR
+    )
+
+    response = await client.get(
+        f"/v1/client/users/{USER}/integrations",
+        headers=two_tools["key"],
+    )
+
+    groups = {
+        group["key"]: group for group in response.json()["data"]["groups"]
+    }
+    assert [system["code"] for system in groups["confirm"]["systems"]] == [
+        "beta-identity"
+    ]
+
+
+async def test_connection_to_a_tool_outside_the_type_is_not_found(
+    client: AsyncClient, two_tools: dict[str, Any]
+) -> None:
+    response = await save_connection(
+        client, two_tools, "no-such-tool", id_number=AADHAAR
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "integration_tool_not_found"
+
+
+async def test_inputs_saved_without_a_tool_go_to_the_next_default(
+    client: AsyncClient, two_tools: dict[str, Any]
+) -> None:
+    await route(client, two_tools, "confirm")
+    pending = await save_connection(client, two_tools, id_number=AADHAAR)
+    await route(client, two_tools, "confirm", tool_code="beta-identity")
+
+    connected = await client.post(
+        connection_url(action="connect"), headers=two_tools["key"]
+    )
+
+    assert pending.json()["status"] == "pending"
+    assert pending.json()["integration_tool"] is None
+    assert connected.status_code == 200, connected.text
+    assert connected.json()["id"] == pending.json()["id"]
+    assert connected.json()["integration_tool"]["code"] == "beta-identity"
