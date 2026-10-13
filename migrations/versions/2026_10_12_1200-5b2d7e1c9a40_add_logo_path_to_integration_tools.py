@@ -5,7 +5,7 @@ local folder in development); listings turn it into a full link.
 Nullable, since existing tools have no logo.
 
 Revision ID: 5b2d7e1c9a40
-Revises: 6826c2876281
+Revises: 3f1c9a7d2b64
 Create Date: 2026-10-12 12:00:00.000000
 
 """
@@ -17,7 +17,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "5b2d7e1c9a40"
-down_revision: str | Sequence[str] | None = "6826c2876281"
+down_revision: str | Sequence[str] | None = "3f1c9a7d2b64"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

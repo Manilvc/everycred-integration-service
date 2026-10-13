@@ -87,6 +87,8 @@ from app.features.sessions.schemas import (
     SessionResponse,
     SessionResultField,
     SessionResultResponse,
+    VerifiedUserFilters,
+    VerifiedUserResponse,
 )
 from app.features.user_connections.models import IntegrationOperationLog
 from app.features.user_connections.targets import (
@@ -563,6 +565,40 @@ class SessionService:
         )
         return Page[SessionResponse](
             items=[self._to_response(item) for item in found],
+            total=total,
+            limit=filters.limit,
+            offset=filters.offset,
+        )
+
+    async def list_verified_users(
+        self, client: Client, filters: VerifiedUserFilters
+    ) -> Page[VerifiedUserResponse]:
+        """Return the client's users whose KYC succeeded, newest first.
+
+        Each user appears once, with their most recent successful
+        verification; no personal data is returned.
+        """
+        found, total = await self.sessions.verified_users_page(
+            client.id,
+            integration_type_code=filters.integration_type,
+            flow=filters.flow,
+            verified_after=filters.verified_after,
+            user_uuid=filters.user_uuid,
+            limit=filters.limit,
+            offset=filters.offset,
+        )
+        return Page[VerifiedUserResponse](
+            items=[
+                VerifiedUserResponse(
+                    user_uuid=item.user_uuid,
+                    verified_at=item.completed_at,
+                    session_id=item.id,
+                    integration_type=item.integration_type.code,
+                    tool_code=item.integration_tool.code,
+                    flow=item.flow,
+                )
+                for item in found
+            ],
             total=total,
             limit=filters.limit,
             offset=filters.offset,

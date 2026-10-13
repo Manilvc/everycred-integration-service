@@ -3,7 +3,7 @@
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import Query
@@ -181,7 +181,38 @@ class SessionFilters(PaginationParams):
     )
 
 
+class VerifiedUserFilters(PaginationParams):
+    """Query parameters for listing users whose KYC succeeded."""
+
+    integration_type: str | None = Field(
+        default=None,
+        max_length=CODE_MAX_LENGTH,
+        description="Only verifications of this type, e.g. `confirm`.",
+    )
+    flow: str | None = Field(
+        default=None,
+        pattern=OPERATION_NAME_PATTERN,
+        description="Only verifications by this flow, e.g. `aadhaar_otp`.",
+    )
+    verified_after: datetime | None = Field(
+        default=None,
+        description="Only users verified at or after this time (ISO 8601).",
+    )
+    user_uuid: uuid.UUID | None = Field(
+        default=None, description="Check a single user."
+    )
+
+    @field_validator("verified_after")
+    @classmethod
+    def assume_utc(cls, value: datetime | None) -> datetime | None:
+        """Read a time without a timezone as UTC."""
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
+
+
 SessionQuery = Annotated[SessionFilters, Query()]
+VerifiedUserQuery = Annotated[VerifiedUserFilters, Query()]
 
 
 class SessionNextAction(BaseModel):
@@ -329,3 +360,24 @@ class FlowCatalogResponse(BaseModel):
     tool_code: str
     tool_name: str
     flows: list[FlowDescriptorResponse]
+
+
+class VerifiedUserResponse(BaseModel):
+    """A user whose identity verification succeeded, latest first.
+
+    Attributes:
+        user_uuid: The client's id for the user.
+        verified_at: When the user's most recent successful
+            verification completed.
+        session_id: That session, for its result or details.
+        integration_type: Its integration type, e.g. ``confirm``.
+        tool_code: The tool that verified the user, e.g. ``surepass``.
+        flow: The flow used, e.g. ``aadhaar_otp``.
+    """
+
+    user_uuid: uuid.UUID
+    verified_at: datetime
+    session_id: uuid.UUID
+    integration_type: str
+    tool_code: str
+    flow: str
