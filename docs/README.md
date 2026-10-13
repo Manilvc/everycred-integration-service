@@ -134,3 +134,4 @@ Operations:
 Integrations:
 
 - [SurePass](integrations/surepass.md)
+- [Microsoft Entra ID](integrations/microsoft-entra-id.md)
