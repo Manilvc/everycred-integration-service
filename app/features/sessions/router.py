@@ -16,6 +16,8 @@ from app.features.clients.dependencies import (
 )
 from app.features.sessions.dependencies import SessionServiceDep
 from app.features.sessions.schemas import (
+    FlowCatalogResponse,
+    SessionAuthorizationCallback,
     SessionCreate,
     SessionInputs,
     SessionQuery,
@@ -49,6 +51,37 @@ _CONFLICT = {
 }
 
 
+@router.get(
+    "/integration-types/{integration_type}/flows",
+    response_model=FlowCatalogResponse,
+    summary="Describe the flows a holder screen can offer",
+    responses={
+        status.HTTP_403_FORBIDDEN: {
+            "model": ErrorResponse,
+            "description": "Integration type not enabled for this client",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "Unknown integration type",
+        },
+    },
+)
+async def describe_session_flows(
+    integration_type: str,
+    current_client: CurrentClient,
+    service: SessionServiceDep,
+) -> FlowCatalogResponse:
+    """Return the flows of the tool chosen for the type.
+
+    Each flow lists the inputs to ask the holder for (label, input
+    type, format, masking), whether the holder is redirected to sign
+    in, the outputs a session returns, and the field keys that can be
+    requested by id. Build the verification screen from this instead
+    of hard-coding a provider.
+    """
+    return await service.describe_flows(current_client, integration_type)
+
+
 @router.post(
     "/users/{user_uuid}/sessions",
     response_model=SessionResponse,
@@ -74,12 +107,39 @@ async def start_session(
 ) -> SessionResponse:
     """Start a flow for one user with the tool chosen for the type.
 
-    The session runs straight away. It comes back ``awaiting_input``
-    when a step needs something the holder must type (listed in
-    ``awaiting_inputs``), ``completed`` with an ``outcome``, or
-    ``failed`` with a ``failure_code``.
+    ``consent`` is required: record the holder's consent on your side
+    first and relay it here. The session runs straight away. It comes
+    back ``awaiting_input`` when a step needs something the holder must
+    type (listed in ``awaiting_inputs``), ``awaiting_redirect`` with
+    ``next_action.url`` when the holder must sign in with the provider,
+    ``completed`` with an ``outcome``, or ``failed`` with a
+    ``failure_code``.
     """
     return await service.start(current_client, user_uuid, request)
+
+
+@router.post(
+    "/sessions/authorization-callback",
+    response_model=SessionResponse,
+    summary="Relay the provider's sign-in callback",
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "No sign-in is pending for this state",
+        },
+    },
+)
+async def complete_session_authorization(
+    request: SessionAuthorizationCallback,
+    current_client: CurrentClient,
+    service: SessionServiceDep,
+) -> SessionResponse:
+    """Finish a sign-in and continue the session.
+
+    Send the ``state`` and ``code`` (or ``error``) your redirect URI
+    received. ``state`` identifies the session and works once.
+    """
+    return await service.complete_authorization(current_client, request)
 
 
 @router.get(
@@ -151,6 +211,44 @@ async def get_session_result(
     Available until ``data_expires_at``, after which they are deleted.
     """
     return await service.result(current_client, session_id)
+
+
+@router.delete(
+    "/sessions/{session_id}/result",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Erase a session's result once used",
+    responses={**_NOT_FOUND, **_CONFLICT},
+)
+async def erase_session_result(
+    session_id: uuid.UUID,
+    current_client: CurrentClient,
+    service: SessionServiceDep,
+) -> None:
+    """Delete the attributes now instead of at ``data_expires_at``.
+
+    Call this once the values are saved where they are needed, so
+    personal data is not kept longer than its purpose requires.
+    """
+    await service.erase_result(current_client, session_id)
+
+
+@router.post(
+    "/sessions/{session_id}/consent-withdrawal",
+    response_model=SessionResponse,
+    summary="Record that the holder withdrew consent",
+    responses=_NOT_FOUND,
+)
+async def withdraw_session_consent(
+    session_id: uuid.UUID,
+    current_client: CurrentClient,
+    service: SessionServiceDep,
+) -> SessionResponse:
+    """Stop the session and delete everything collected for it.
+
+    An unfinished session is cancelled; inputs and the result are
+    deleted; the withdrawal time is recorded. Safe to repeat.
+    """
+    return await service.withdraw_consent(current_client, session_id)
 
 
 @router.post(

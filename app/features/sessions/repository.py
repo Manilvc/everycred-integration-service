@@ -36,6 +36,17 @@ class SessionRepository:
             )
         )
 
+    async def get_by_oauth_state(
+        self, client_id: uuid.UUID, state_hash: str
+    ) -> IntegrationSession | None:
+        """Return the client's session waiting for this sign-in."""
+        return await self.session.scalar(
+            select(IntegrationSession).where(
+                IntegrationSession.client_id == client_id,
+                IntegrationSession.oauth_state_hash == state_hash,
+            )
+        )
+
     async def claim(
         self, integration_session: IntegrationSession, from_status: str
     ) -> bool:

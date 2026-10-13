@@ -7,10 +7,16 @@ when the client submits it. When the last step finishes, the flow's
 outputs are read from the response and kept, encrypted, until the
 retention window ends.
 
+A flow may open with a sign-in at the provider (OpenID Connect): the
+session then waits as ``awaiting_redirect`` until the client relays the
+provider's callback, and the ID token's claims feed the rest of the
+flow.
+
 Nothing personal is stored in the database: inputs and captured values
 live in the secret store while the session is active, and the result
-only until ``data_expires_at``. Webhook events carry the session's
-status, never its data.
+only until ``data_expires_at``, or until the client erases it or the
+holder withdraws consent. Webhook events carry the session's status,
+never its data.
 """
 
 import asyncio
@@ -31,7 +37,12 @@ from app.connectors.base import (
     OperationOutcome,
     UnknownOperationError,
 )
-from app.connectors.http.config import FlowCondition, FlowConfig
+from app.connectors.http import authorization
+from app.connectors.http.config import (
+    FlowCondition,
+    FlowConfig,
+    OAuth2AuthorizationCode,
+)
 from app.core.config import Settings
 from app.core.context import get_request_id
 from app.core.data_paths import MISSING, read_path
@@ -39,7 +50,12 @@ from app.core.exceptions import AppError
 from app.core.models import utc_now
 from app.core.secret_store import SecretStore, SecretStoreError
 from app.features.clients.models import Client
+from app.features.integration_tools.repository import (
+    IntegrationToolFieldRepository,
+)
+from app.features.sessions import policies
 from app.features.sessions.exceptions import (
+    AuthorizationNotFoundError,
     FlowNotFoundError,
     ResultExpiredError,
     ResultNotReadyError,
@@ -47,6 +63,7 @@ from app.features.sessions.exceptions import (
     SessionNotAwaitingInputError,
     SessionNotFoundError,
     UnexpectedInputsError,
+    UnknownRequestedFieldsError,
 )
 from app.features.sessions.models import (
     FAILURE_MESSAGE_MAX_LENGTH,
@@ -57,10 +74,18 @@ from app.features.sessions.models import (
 )
 from app.features.sessions.repository import SessionRepository
 from app.features.sessions.schemas import (
+    FlowCatalogResponse,
+    FlowDescriptorResponse,
+    FlowFieldResponse,
+    FlowInputResponse,
+    SessionAuthorizationCallback,
+    SessionConsentResponse,
     SessionCreate,
     SessionFilters,
     SessionInputs,
+    SessionNextAction,
     SessionResponse,
+    SessionResultField,
     SessionResultResponse,
 )
 from app.features.user_connections.models import IntegrationOperationLog
@@ -76,6 +101,8 @@ logger = logging.getLogger(__name__)
 
 SESSION_PREFIX = "session."
 PROVIDER_REJECTED = "provider_rejected"
+# Recorded in integration_operation_logs like a provider operation.
+CODE_EXCHANGE_OPERATION = "authorization_code_exchange"
 # Webhook events, named after the status they report.
 FINAL_EVENTS = {
     SessionStatus.COMPLETED: "session.completed",
@@ -105,14 +132,21 @@ class FlowState:
     Attributes:
         inputs: Everything the holder has supplied so far.
         captured: Values earlier steps captured from responses.
+        pending_authorization: The PKCE verifier, nonce, and redirect
+            URI of a sign-in in progress; dropped once it completes.
     """
 
     inputs: dict[str, Any] = field(default_factory=dict)
     captured: dict[str, Any] = field(default_factory=dict)
+    pending_authorization: dict[str, str] | None = None
 
     def to_secret(self) -> dict[str, Any]:
         """Serialise for the secret store."""
-        return {"inputs": self.inputs, "captured": self.captured}
+        return {
+            "inputs": self.inputs,
+            "captured": self.captured,
+            "pending_authorization": self.pending_authorization,
+        }
 
     @classmethod
     def from_secret(cls, value: dict[str, Any]) -> "FlowState":
@@ -120,6 +154,7 @@ class FlowState:
         return cls(
             inputs=dict(value.get("inputs", {})),
             captured=dict(value.get("captured", {})),
+            pending_authorization=value.get("pending_authorization"),
         )
 
 
@@ -172,6 +207,7 @@ class SessionService:
         session: Unit of work; committed here.
         sessions: Persistence for sessions.
         targets: Resolves the client's tool for a type.
+        tool_fields: Field keys a client may request by id.
         secret_store: Holds session inputs and results.
         webhooks: Queues status events for the client.
         settings: Timeouts, session lifetime, and retention.
@@ -182,6 +218,7 @@ class SessionService:
         session: AsyncSession,
         sessions: SessionRepository,
         targets: IntegrationTargetResolver,
+        tool_fields: IntegrationToolFieldRepository,
         secret_store: SecretStore,
         webhooks: WebhookService,
         settings: Settings,
@@ -189,18 +226,76 @@ class SessionService:
         self.session = session
         self.sessions = sessions
         self.targets = targets
+        self.tool_fields = tool_fields
         self.secret_store = secret_store
         self.webhooks = webhooks
         self.settings = settings
+
+    async def describe_flows(
+        self, client: Client, integration_type: str
+    ) -> FlowCatalogResponse:
+        """Describe the flows of the client's tool for a type.
+
+        Everything a holder-facing screen needs to ask for the inputs,
+        and the field keys the client can request by id.
+
+        Raises:
+            IntegrationTypeNotFoundError: Unknown integration type.
+            IntegrationNotEnabledError: Not enabled for the client.
+            IntegrationToolNotSelectedError: No tool chosen for the type.
+            IntegrationToolInactiveError: The chosen tool is inactive.
+            IntegrationToolDisabledError: The client switched it off.
+            ConnectorNotAvailableError: The tool has no connector.
+        """
+        target = await self.targets.resolve(client, integration_type)
+        flows = target.connector_class.describe_flows(
+            target.tool.connector_config
+        )
+        fields_by_flow: dict[str, list[FlowFieldResponse]] = {}
+        for tool_field in await self.tool_fields.list_visible_to_client(
+            target.tool.id, client.id
+        ):
+            fields_by_flow.setdefault(tool_field.flow, []).append(
+                FlowFieldResponse(
+                    id=tool_field.id,
+                    key=tool_field.key,
+                    label=tool_field.label,
+                    value_type=tool_field.value_type,
+                )
+            )
+        return FlowCatalogResponse(
+            integration_type=target.integration_type.code,
+            tool_code=target.tool.code,
+            tool_name=target.tool.name,
+            flows=[
+                FlowDescriptorResponse(
+                    name=name,
+                    purpose=SessionPurpose(flow.purpose),
+                    kind=flow.kind,
+                    description=flow.description,
+                    inputs=[
+                        self._describe_input(flow, input_name)
+                        for input_name in flow.all_inputs()
+                    ],
+                    outputs=list(flow.outputs),
+                    fields=fields_by_flow.get(name, []),
+                )
+                for name, flow in flows.items()
+            ],
+        )
 
     async def start(
         self, client: Client, user_uuid: uuid.UUID, request: SessionCreate
     ) -> SessionResponse:
         """Create a session and run it until it needs input or finishes.
 
-        Problems with the setup (type not enabled, unknown flow) are
-        raised before anything is stored. Problems with the provider
-        are recorded on the session, which is returned as ``failed``.
+        Problems with the setup (type not enabled, unknown flow) and
+        with the request (stale consent, malformed inputs) are raised
+        before anything is stored. Problems with the provider are
+        recorded on the session, which is returned as ``failed``.
+
+        A flow that opens with a sign-in returns ``awaiting_redirect``
+        with ``next_action.url`` for the holder's browser.
 
         Raises:
             IntegrationTypeNotFoundError: Unknown integration type.
@@ -211,12 +306,26 @@ class SessionService:
             ConnectorNotAvailableError: The tool has no connector.
             FlowNotFoundError: The tool has no such flow.
             UnexpectedInputsError: Inputs the flow never uses were sent.
+            InputValidationError: Inputs break the flow's input specs.
+            ConsentNotRecentError: The consent is stale or in the future.
+            InvalidRedirectUriError: The redirect URI is not acceptable.
+            UnknownRequestedAttributesError: Unknown requested outputs.
+            UnknownRequestedFieldsError: Unknown requested fields.
         """
         target = await self.targets.resolve(client, request.integration_type)
         flow = self._flow_or_raise(target, request.flow)
         self._reject_unexpected(flow, request.inputs)
-
+        policies.check_input_formats(flow, request.inputs)
         now = utc_now()
+        policies.check_consent_recent(request.consent, now)
+        redirect_uri = policies.check_redirect_uri(
+            flow, request.redirect_uri, target.client_config.settings
+        )
+        policies.check_requested_attributes(flow, request.requested_attributes)
+        requested_fields = await self._requested_fields(
+            client, target, request
+        )
+
         integration_session = IntegrationSession(
             id=uuid.uuid4(),
             client_id=client.id,
@@ -229,7 +338,15 @@ class SessionService:
             current_step=0,
             awaiting_inputs=[],
             result_attributes=[],
+            result_fields=[],
+            requested_attributes=request.requested_attributes,
+            requested_fields=requested_fields,
             reference=request.reference,
+            consent_purpose=request.consent.purpose,
+            consent_notice_version=request.consent.notice_version,
+            consent_language=request.consent.language,
+            consented_at=request.consent.consented_at,
+            consent_reference=request.consent.reference,
             expires_at=now
             + timedelta(minutes=self.settings.session_ttl_minutes),
         )
@@ -248,7 +365,113 @@ class SessionService:
             client.id,
         )
         state = FlowState(inputs=dict(request.inputs))
-        await self._advance(integration_session, client, target, flow, state)
+        next_action: SessionNextAction | None = None
+        if flow.authorization is not None and redirect_uri is not None:
+            next_action = await self._begin_authorization(
+                integration_session,
+                client,
+                target,
+                flow.authorization,
+                state,
+                redirect_uri,
+            )
+        else:
+            await self._advance(
+                integration_session, client, target, flow, state
+            )
+        await self.session.commit()
+        return self._to_response(integration_session, next_action)
+
+    async def complete_authorization(
+        self, client: Client, callback: SessionAuthorizationCallback
+    ) -> SessionResponse:
+        """Finish a provider sign-in and run the rest of the flow.
+
+        ``state`` is single-use: it is cleared before the code is
+        exchanged, so a replayed callback finds no session.
+
+        Raises:
+            AuthorizationNotFoundError: No session of the client waits
+                for this state (unknown, already used, or finished).
+        """
+        integration_session = await self.sessions.get_by_oauth_state(
+            client.id, authorization.hash_state(callback.state)
+        )
+        if integration_session is None:
+            raise AuthorizationNotFoundError
+        if await self._expire_if_due(integration_session):
+            await self.session.commit()
+            raise AuthorizationNotFoundError
+        if integration_session.status != SessionStatus.AWAITING_REDIRECT:
+            raise AuthorizationNotFoundError
+
+        try:
+            target, flow = await self._current_target(
+                client, integration_session
+            )
+        except StepFailedError as failure:
+            await self._fail(integration_session, failure)
+            await self.session.commit()
+            return self._to_response(integration_session)
+        if not await self.sessions.claim(
+            integration_session, SessionStatus.AWAITING_REDIRECT
+        ):
+            raise AuthorizationNotFoundError
+        integration_session.oauth_state_hash = None
+        await self.session.commit()
+
+        try:
+            state = FlowState.from_secret(
+                await self.secret_store.read(
+                    integration_session.state_secret_reference or ""
+                )
+            )
+        except SecretStoreError:
+            await self._fail(
+                integration_session,
+                StepFailedError(
+                    "session_state_unavailable",
+                    "The session's sign-in details could not be read.",
+                ),
+            )
+            await self.session.commit()
+            return self._to_response(integration_session)
+
+        pending = state.pending_authorization
+        if (
+            callback.error
+            or not callback.code
+            or pending is None
+            or flow.authorization is None
+        ):
+            await self._fail(
+                integration_session,
+                StepFailedError(
+                    "authorization_declined",
+                    "The holder did not complete sign-in with the provider.",
+                ),
+            )
+            await self.session.commit()
+            return self._to_response(integration_session)
+
+        claims = await self._exchange_code(
+            integration_session,
+            client,
+            target,
+            flow.authorization,
+            callback.code,
+            pending,
+        )
+        if claims is not None:
+            state.pending_authorization = None
+            await self._advance(
+                integration_session,
+                client,
+                target,
+                flow,
+                state,
+                initial_data=claims,
+            )
         await self.session.commit()
         return self._to_response(integration_session)
 
@@ -260,8 +483,10 @@ class SessionService:
         Raises:
             SessionNotFoundError: The client has no such session.
             SessionNotActiveError: The session has finished or expired.
-            SessionNotAwaitingInputError: It is busy processing.
+            SessionNotAwaitingInputError: It is busy processing, or
+                waiting for a sign-in rather than inputs.
             UnexpectedInputsError: Inputs the flow never uses were sent.
+            InputValidationError: Inputs break the flow's input specs.
         """
         integration_session = await self._get_or_raise(client, session_id)
         if await self._expire_if_due(integration_session):
@@ -281,6 +506,7 @@ class SessionService:
             await self.session.commit()
             return self._to_response(integration_session)
         self._reject_unexpected(flow, request.inputs)
+        policies.check_input_formats(flow, request.inputs)
 
         if not await self.sessions.claim(
             integration_session, SessionStatus.AWAITING_INPUT
@@ -360,25 +586,99 @@ class SessionService:
             raise ResultNotReadyError(integration_session.status)
 
         attributes: dict[str, Any] = {}
-        if integration_session.result_attributes:
+        fields: dict[str, Any] = {}
+        if (
+            integration_session.result_attributes
+            or integration_session.result_fields
+        ):
             expires = integration_session.data_expires_at
             reference = integration_session.result_secret_reference
             if reference is None or (
                 expires is not None and expires <= utc_now()
             ):
                 raise ResultExpiredError
-            attributes = await self.secret_store.read(reference)
+            attributes, fields = policies.unpack_result(
+                await self.secret_store.read(reference)
+            )
         logger.info(
             "Result of session %s read by client %s",
             integration_session.id,
             client.id,
         )
+        key_by_field_id = {
+            requested["id"]: requested["key"]
+            for requested in integration_session.requested_fields or []
+        }
         return SessionResultResponse(
             session_id=integration_session.id,
             outcome=SessionOutcome(integration_session.outcome),
             attributes=attributes,
+            fields=[
+                SessionResultField(
+                    field_id=uuid.UUID(field_id),
+                    key=key_by_field_id[field_id],
+                    value=value,
+                )
+                for field_id, value in fields.items()
+                if field_id in key_by_field_id
+            ],
             data_expires_at=integration_session.data_expires_at,
         )
+
+    async def erase_result(
+        self, client: Client, session_id: uuid.UUID
+    ) -> None:
+        """Delete a result now that the client has used it.
+
+        DPDP section 8(7): personal data is erased once its purpose is
+        served. Erasing an already erased result does nothing.
+
+        Raises:
+            SessionNotFoundError: The client has no such session.
+            ResultNotReadyError: The session is still running.
+        """
+        integration_session = await self._get_or_raise(client, session_id)
+        if integration_session.is_active:
+            raise ResultNotReadyError(integration_session.status)
+        await self._erase_result(integration_session)
+        await self.session.commit()
+        logger.info(
+            "Result of session %s erased by client %s",
+            integration_session.id,
+            client.id,
+        )
+
+    async def withdraw_consent(
+        self, client: Client, session_id: uuid.UUID
+    ) -> SessionResponse:
+        """Record that the holder withdrew consent, and stop processing.
+
+        DPDP section 6(4)-(6): an unfinished session is cancelled, its
+        inputs and any result are deleted, and the withdrawal time is
+        kept as evidence. Withdrawing again changes nothing.
+
+        Raises:
+            SessionNotFoundError: The client has no such session.
+        """
+        integration_session = await self._get_or_raise(client, session_id)
+        if integration_session.consent_withdrawn_at is not None:
+            return self._to_response(integration_session)
+        now = utc_now()
+        if integration_session.is_active:
+            integration_session.status = SessionStatus.CANCELLED
+            integration_session.completed_at = now
+            integration_session.awaiting_inputs = []
+            integration_session.oauth_state_hash = None
+            await self._discard_state(integration_session)
+        await self._erase_result(integration_session)
+        integration_session.consent_withdrawn_at = now
+        await self.session.commit()
+        logger.info(
+            "Consent withdrawn for session %s of client %s",
+            integration_session.id,
+            client.id,
+        )
+        return self._to_response(integration_session)
 
     async def cancel(
         self, client: Client, session_id: uuid.UUID
@@ -395,6 +695,7 @@ class SessionService:
         integration_session.status = SessionStatus.CANCELLED
         integration_session.completed_at = utc_now()
         integration_session.awaiting_inputs = []
+        integration_session.oauth_state_hash = None
         await self._discard_state(integration_session)
         await self.session.commit()
         logger.info("Session %s cancelled", integration_session.id)
@@ -436,8 +737,26 @@ class SessionService:
         target: IntegrationTarget,
         flow: FlowConfig,
         state: FlowState,
+        initial_data: Any = None,
     ) -> None:
-        """Run steps from ``current_step`` until paused or finished."""
+        """Run steps from ``current_step`` until paused or finished.
+
+        ``initial_data`` is what a completed sign-in returned (the ID
+        token claims). Values are captured from it first, and it is the
+        final data of a flow that has no steps.
+        """
+        if (
+            initial_data is not None
+            and flow.authorization is not None
+            and not await self._capture(
+                integration_session,
+                CODE_EXCHANGE_OPERATION,
+                flow.authorization.capture,
+                initial_data,
+                state,
+            )
+        ):
+            return
         integration_session.status = SessionStatus.PROCESSING
         integration_session.awaiting_inputs = []
         try:
@@ -454,7 +773,7 @@ class SessionService:
             )
             return
 
-        last_data: Any = None
+        last_data: Any = initial_data
         steps = flow.steps
         while integration_session.current_step < len(steps):
             step = steps[integration_session.current_step]
@@ -488,19 +807,14 @@ class SessionService:
             if not outcome.success:
                 await self._provider_rejected(integration_session)
                 return
-            for name, path in step.capture.items():
-                value = read_path(outcome.data, path)
-                if value is MISSING:
-                    await self._fail(
-                        integration_session,
-                        StepFailedError(
-                            "unexpected_response",
-                            f"The provider's response to "
-                            f"'{step.operation}' had no '{path}'.",
-                        ),
-                    )
-                    return
-                state.captured[name] = value
+            if not await self._capture(
+                integration_session,
+                step.operation,
+                step.capture,
+                outcome.data,
+                state,
+            ):
+                return
             last_data = outcome.data
             integration_session.current_step += 1
 
@@ -605,6 +919,252 @@ class SessionService:
             ", ".join(missing),
         )
 
+    async def _begin_authorization(
+        self,
+        integration_session: IntegrationSession,
+        client: Client,
+        target: IntegrationTarget,
+        auth: OAuth2AuthorizationCode,
+        state: FlowState,
+        redirect_uri: str,
+    ) -> SessionNextAction | None:
+        """Prepare the provider sign-in and wait for the holder to return.
+
+        Returns the action for the holder, or None when the session
+        failed instead (credentials missing or unreadable).
+        """
+        try:
+            credentials = await self.targets.load_credentials(
+                client, target.tool
+            )
+        except SecretStoreError:
+            await self._fail(
+                integration_session,
+                StepFailedError(
+                    "tool_credentials_unavailable",
+                    "The tool's credentials could not be read.",
+                ),
+            )
+            return None
+        request = authorization.AuthorizationRequest.new()
+        try:
+            url = authorization.build_authorization_url(
+                auth,
+                {
+                    "credentials": credentials,
+                    "settings": target.client_config.settings,
+                },
+                request,
+                redirect_uri,
+            )
+        except MissingParametersError as exc:
+            error = missing_inputs_error(target.tool.code, exc)
+            await self._fail(
+                integration_session,
+                StepFailedError(error.error_code, error.message),
+            )
+            return None
+
+        state.pending_authorization = {
+            "nonce": request.nonce,
+            "code_verifier": request.code_verifier,
+            "redirect_uri": redirect_uri,
+        }
+        try:
+            await self._save_state(integration_session, state)
+        except SecretStoreError:
+            await self._fail(
+                integration_session,
+                StepFailedError(
+                    "session_state_unavailable",
+                    "The session's sign-in details could not be stored.",
+                ),
+            )
+            return None
+        integration_session.oauth_state_hash = authorization.hash_state(
+            request.state
+        )
+        integration_session.status = SessionStatus.AWAITING_REDIRECT
+        logger.info("Session %s waiting for sign-in", integration_session.id)
+        return SessionNextAction(type="redirect", url=url)
+
+    async def _exchange_code(
+        self,
+        integration_session: IntegrationSession,
+        client: Client,
+        target: IntegrationTarget,
+        auth: OAuth2AuthorizationCode,
+        code: str,
+        pending: dict[str, str],
+    ) -> dict[str, Any] | None:
+        """Redeem the code; return the claims, or None if the session failed.
+
+        Runs through :meth:`_run_step` so the exchange is timed out,
+        logged, and its errors mapped like any provider operation.
+        """
+        try:
+            credentials = await self.targets.load_credentials(
+                client, target.tool
+            )
+        except SecretStoreError:
+            await self._fail(
+                integration_session,
+                StepFailedError(
+                    "tool_credentials_unavailable",
+                    "The tool's credentials could not be read.",
+                ),
+            )
+            return None
+        values = {
+            "credentials": credentials,
+            "settings": target.client_config.settings,
+        }
+
+        async def exchange(operation: str) -> OperationOutcome:
+            claims = await authorization.exchange_code(
+                self.targets.http_client,
+                auth,
+                values,
+                code=code,
+                redirect_uri=pending["redirect_uri"],
+                code_verifier=pending["code_verifier"],
+                nonce=pending["nonce"],
+                timeout_seconds=self.settings.connector_timeout_seconds,
+            )
+            return OperationOutcome(success=True, data=claims)
+
+        try:
+            outcome = await self._run_step(
+                integration_session,
+                client,
+                target,
+                CODE_EXCHANGE_OPERATION,
+                exchange,
+                {},
+            )
+        except StepFailedError as failure:
+            await self._fail(integration_session, failure)
+            return None
+        return outcome.data
+
+    async def _capture(
+        self,
+        integration_session: IntegrationSession,
+        operation: str,
+        capture: dict[str, str],
+        data: Any,
+        state: FlowState,
+    ) -> bool:
+        """Copy captured values into ``state``; False if the session failed."""
+        for name, path in capture.items():
+            value = read_path(data, path)
+            if value is MISSING:
+                await self._fail(
+                    integration_session,
+                    StepFailedError(
+                        "unexpected_response",
+                        f"The provider's response to '{operation}' had "
+                        f"no '{path}'.",
+                    ),
+                )
+                return False
+            state.captured[name] = value
+        return True
+
+    @staticmethod
+    def _kept_attributes(
+        integration_session: IntegrationSession, attributes: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Drop outputs the client did not ask for (data minimisation)."""
+        requested = integration_session.requested_attributes
+        if requested is None:
+            # Asking only for fields means no outputs are wanted.
+            return {} if integration_session.requested_fields else attributes
+        return {
+            name: value
+            for name, value in attributes.items()
+            if name in set(requested)
+        }
+
+    async def _requested_fields(
+        self,
+        client: Client,
+        target: IntegrationTarget,
+        request: SessionCreate,
+    ) -> list[dict[str, str]] | None:
+        """Resolve requested field ids to keys of this flow.
+
+        Raises:
+            UnknownRequestedFieldsError: An id is not a field of the
+                flow that this client can see.
+        """
+        if request.requested_fields is None:
+            return None
+        requested_ids = set(request.requested_fields)
+        found = await self.tool_fields.list_visible_to_client(
+            target.tool.id,
+            client.id,
+            flow=request.flow,
+            field_ids=requested_ids,
+        )
+        missing = sorted(
+            requested_ids - {tool_field.id for tool_field in found}
+        )
+        if missing:
+            raise UnknownRequestedFieldsError(missing)
+        return [
+            {"id": str(tool_field.id), "key": tool_field.key}
+            for tool_field in found
+        ]
+
+    async def _erase_result(
+        self, integration_session: IntegrationSession
+    ) -> None:
+        """Delete the stored result now, or leave it to the worker.
+
+        If the secret store is unreachable, ``data_expires_at`` is moved
+        to now so the worker's purge deletes it on its next round.
+        """
+        reference = integration_session.result_secret_reference
+        if reference is None:
+            return
+        now = utc_now()
+        integration_session.data_expires_at = now
+        try:
+            await self.secret_store.delete(reference)
+        except SecretStoreError:
+            logger.warning(
+                "Result of session %s left for the worker to delete",
+                integration_session.id,
+            )
+            return
+        integration_session.result_secret_reference = None
+
+    @staticmethod
+    def _describe_input(flow: FlowConfig, name: str) -> FlowInputResponse:
+        spec = flow.input_specs.get(name)
+        if spec is None:
+            return FlowInputResponse(
+                name=name,
+                label=name.replace("_", " ").capitalize(),
+                input_type="text",
+                pattern=None,
+                min_length=None,
+                max_length=None,
+                is_masked=False,
+                hint=None,
+            )
+        return FlowInputResponse(
+            name=name,
+            label=spec.label,
+            input_type=spec.input_type,
+            pattern=spec.pattern,
+            min_length=spec.min_length,
+            max_length=spec.max_length,
+            is_masked=spec.is_masked,
+            hint=spec.hint,
+        )
+
     async def _complete(
         self,
         integration_session: IntegrationSession,
@@ -622,14 +1182,22 @@ class SessionService:
             await self._provider_rejected(integration_session)
             return
 
-        attributes = map_outputs(flow.outputs, data, state.captured)
+        attributes = self._kept_attributes(
+            integration_session,
+            map_outputs(flow.outputs, data, state.captured),
+        )
+        fields = {
+            requested["id"]: value
+            for requested in integration_session.requested_fields or []
+            if (value := read_path(data, requested["key"])) is not MISSING
+        }
         now = utc_now()
-        if attributes:
+        if attributes or fields:
             try:
                 integration_session.result_secret_reference = (
                     await self.secret_store.create(
                         result_secret_name(client.id, integration_session.id),
-                        attributes,
+                        policies.pack_result(attributes, fields),
                         tags={
                             "client_id": str(client.id),
                             "purpose": "session_result",
@@ -649,6 +1217,7 @@ class SessionService:
                 days=self.settings.session_data_retention_days
             )
         integration_session.result_attributes = sorted(attributes)
+        integration_session.result_fields = sorted(fields)
         integration_session.outcome = (
             SessionOutcome.GATHERED
             if flow.purpose == SessionPurpose.GATHER
@@ -716,6 +1285,7 @@ class SessionService:
         """Set the final status, drop the inputs, and queue the event."""
         integration_session.status = final
         integration_session.awaiting_inputs = []
+        integration_session.oauth_state_hash = None
         integration_session.completed_at = utc_now()
         await self._discard_state(integration_session)
         await self.webhooks.enqueue(
@@ -829,11 +1399,33 @@ class SessionService:
             "outcome": integration_session.outcome,
             "failure_code": integration_session.failure_code,
             "result_attributes": list(integration_session.result_attributes),
+            "result_fields": list(integration_session.result_fields),
         }
 
     @staticmethod
-    def _to_response(
+    def _to_consent_response(
         integration_session: IntegrationSession,
+    ) -> SessionConsentResponse | None:
+        if (
+            integration_session.consented_at is None
+            or integration_session.consent_purpose is None
+            or integration_session.consent_notice_version is None
+        ):
+            return None
+        return SessionConsentResponse(
+            purpose=integration_session.consent_purpose,
+            notice_version=integration_session.consent_notice_version,
+            language=integration_session.consent_language or "en",
+            consented_at=integration_session.consented_at,
+            reference=integration_session.consent_reference,
+            withdrawn_at=integration_session.consent_withdrawn_at,
+        )
+
+    @classmethod
+    def _to_response(
+        cls,
+        integration_session: IntegrationSession,
+        next_action: SessionNextAction | None = None,
     ) -> SessionResponse:
         return SessionResponse(
             id=integration_session.id,
@@ -849,10 +1441,16 @@ class SessionService:
                 else None
             ),
             awaiting_inputs=list(integration_session.awaiting_inputs),
+            next_action=next_action,
             reference=integration_session.reference,
             failure_code=integration_session.failure_code,
             failure_message=integration_session.failure_message,
             result_attributes=list(integration_session.result_attributes),
+            result_fields=[
+                uuid.UUID(field_id)
+                for field_id in integration_session.result_fields
+            ],
+            consent=cls._to_consent_response(integration_session),
             expires_at=integration_session.expires_at,
             completed_at=integration_session.completed_at,
             data_expires_at=integration_session.data_expires_at,
