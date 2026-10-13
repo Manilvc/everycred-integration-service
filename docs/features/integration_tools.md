@@ -1,7 +1,7 @@
 # Integration Tools
 
 > Package: `app/features/integration_tools/`
-> Last updated: 2026-10-02
+> Last updated: 2026-10-12
 
 ## Overview
 
@@ -208,6 +208,29 @@ the same key.
 | `integration_tool_id`, `client_id`, `flow`, `key` | Unique together; `client_id` empty for global fields |
 | `label` | Optional display name |
 | `value_type` | `string`, `number`, `boolean`, `object`, or `array` |
+
+## Logo
+
+Send the logo with the tool definition as base64 (optionally a data
+URI). PNG, JPEG, or WebP, at most 1 MB:
+
+```json
+PUT /v1/integration-tools/surepass
+{"name": "SurePass", "integration_types": ["confirm"], "logo": "data:image/png;base64,iVBORw0KGgo…"}
+```
+
+| `logo` in the body | Effect |
+|--------------------|--------|
+| left out | Keeps the current logo |
+| base64 / data URI | Stores a new file and replaces the logo |
+| `null` | Removes the logo |
+
+The file goes to S3 (or the local folder in development); only its key
+is saved in `integration_tools.logo_path`. Every listing returns the
+full link as `logo_url` (`null` when there is none): the admin and
+client tool listings, the client Integrations screen and drawer, the
+user integrations listing, and `integration_tool` in client
+configurations and user connections. See [media](../core/media.md).
 
 ## Data model
 

@@ -24,6 +24,7 @@ app/
 │   ├── encryption.py    # Fernet encryption for stored secrets
 │   ├── secret_store.py  # AWS Secrets Manager + KMS, local fallback
 │   ├── data_paths.py    # read_path(): dot paths into provider responses
+│   ├── media.py         # Tool logos: S3 or local store, public links
 │   └── http_client.py   # Shared httpx client, HttpClient dependency
 ├── shared/              # Feature-agnostic schemas and helpers
 │   ├── schemas.py       # ErrorResponse, Page[ItemT]
@@ -107,6 +108,7 @@ Core modules:
 - [encryption](core/encryption.md)
 - [secret_store](core/secret_store.md)
 - [data_paths](core/data_paths.md)
+- [media](core/media.md)
 
 Features:
 

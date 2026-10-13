@@ -94,6 +94,7 @@ class IntegrationSystem(BaseModel):
     source_role_id: uuid.UUID
     name: str
     status_note: str | None
+    logo_url: str | None
     is_connected: bool
     is_active: bool
     is_default: bool
@@ -142,6 +143,7 @@ class UserIntegrationSystem(BaseModel):
     source_role_id: uuid.UUID
     name: str
     status_note: str | None
+    logo_url: str | None
     is_connected: bool
     is_active: bool
     is_default: bool
@@ -203,6 +205,7 @@ class ToolConnectionDetail(BaseModel):
     name: str
     provider: str | None
     description: str | None
+    logo_url: str | None
     integration_types: list[IntegrationTypeInfo]
     connector_kind: str | None
     auth_method: str | None = Field(

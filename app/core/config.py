@@ -33,6 +33,13 @@ class SecretStoreBackend(StrEnum):
     LOCAL = "local"
 
 
+class LogoStorageBackend(StrEnum):
+    """Where integration tool logos are stored."""
+
+    S3 = "s3"
+    LOCAL = "local"
+
+
 class Settings(BaseSettings):
     """Runtime settings for the integration service.
 
@@ -105,6 +112,20 @@ class Settings(BaseSettings):
     # Deleted secrets stay recoverable for this long (AWS allows 7-30).
     secret_recovery_window_days: int = Field(default=7, ge=7, le=30)
 
+    # Integration tool logos. Only the object key is stored in the
+    # database; listings return LOGO_PUBLIC_BASE_URL + "/" + key, so the
+    # bucket (or the CloudFront distribution in front of it) must allow
+    # public reads of this prefix. "local" writes files under
+    # LOGO_LOCAL_DIR and serves them at /media, for development only.
+    logo_storage_backend: LogoStorageBackend = LogoStorageBackend.LOCAL
+    logo_s3_bucket: str | None = None
+    logo_s3_prefix: str = Field(
+        default="integration-tools/logos",
+        pattern=r"^[A-Za-z0-9!_.*'()/-]{1,200}$",
+    )
+    logo_public_base_url: str = "http://127.0.0.1:8001/media"
+    logo_local_dir: str = "media"
+
     # Verification and gather sessions. A session not finished within the
     # TTL expires (its inputs, e.g. an OTP, are deleted). Results are kept
     # encrypted for the retention window, then deleted automatically.
@@ -165,6 +186,29 @@ class Settings(BaseSettings):
                 "AWS_REGION and SECRETS_KMS_KEY_ID are required when "
                 "SECRET_STORE_BACKEND is 'aws'"
             )
+        return self
+
+    @model_validator(mode="after")
+    def check_logo_storage(self) -> "Settings":
+        """Require S3 settings for S3, and S3 in production.
+
+        Production containers have a read-only filesystem, so local
+        logo files could not be written there.
+        """
+        if (
+            self.environment is Environment.PRODUCTION
+            and self.logo_storage_backend is not LogoStorageBackend.S3
+        ):
+            raise ValueError("LOGO_STORAGE_BACKEND must be 's3' in production")
+        if self.logo_storage_backend is LogoStorageBackend.S3 and not (
+            self.aws_region and self.logo_s3_bucket
+        ):
+            raise ValueError(
+                "AWS_REGION and LOGO_S3_BUCKET are required when "
+                "LOGO_STORAGE_BACKEND is 's3'"
+            )
+        if not self.logo_public_base_url.startswith(("https://", "http://")):
+            raise ValueError("LOGO_PUBLIC_BASE_URL must be an http(s) URL")
         return self
 
     @property

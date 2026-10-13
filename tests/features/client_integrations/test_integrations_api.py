@@ -186,6 +186,7 @@ async def test_list_matches_the_everycred_screen_shape(
         "source_role_id",
         "name",
         "status_note",
+        "logo_url",
         "is_connected",
         "is_active",
         "is_default",
