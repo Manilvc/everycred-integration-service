@@ -21,12 +21,14 @@ never its data.
 
 import asyncio
 import logging
+import secrets
 import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,8 +41,10 @@ from app.connectors.base import (
 )
 from app.connectors.http import authorization
 from app.connectors.http.config import (
+    RETURN_URL_VALUE,
     FlowCondition,
     FlowConfig,
+    FlowStep,
     OAuth2AuthorizationCode,
 )
 from app.core.config import Settings
@@ -158,6 +162,10 @@ class FlowState:
             captured=dict(value.get("captured", {})),
             pending_authorization=value.get("pending_authorization"),
         )
+
+
+# Marks session state paused at a redirect step, not an OIDC sign-in.
+RETURN_PENDING = "return"
 
 
 def state_secret_name(client_id: uuid.UUID, session_id: uuid.UUID) -> str:
@@ -391,7 +399,9 @@ class SessionService:
                 redirect_uri,
             )
         else:
-            await self._advance(
+            if redirect_uri is not None:
+                self._prepare_return(integration_session, state, redirect_uri)
+            next_action = await self._advance(
                 integration_session, client, target, flow, state
             )
         await self.session.commit()
@@ -453,6 +463,10 @@ class SessionService:
             return self._to_response(integration_session)
 
         pending = state.pending_authorization
+        if pending is not None and pending.get("type") == RETURN_PENDING:
+            return await self._resume_after_return(
+                integration_session, client, target, flow, state, callback
+            )
         if (
             callback.error
             or not callback.code
@@ -548,9 +562,11 @@ class SessionService:
             return self._to_response(integration_session)
 
         state.inputs.update(request.inputs)
-        await self._advance(integration_session, client, target, flow, state)
+        next_action = await self._advance(
+            integration_session, client, target, flow, state
+        )
         await self.session.commit()
-        return self._to_response(integration_session)
+        return self._to_response(integration_session, next_action)
 
     async def get(
         self, client: Client, session_id: uuid.UUID
@@ -789,8 +805,11 @@ class SessionService:
         state: FlowState,
         initial_data: Any = None,
         user_access_token: str | None = None,
-    ) -> None:
+    ) -> SessionNextAction | None:
         """Run steps from ``current_step`` until paused or finished.
+
+        Returns the action for the holder when a redirect step pauses
+        the session, otherwise None.
 
         ``initial_data`` is what a completed sign-in returned (the ID
         token claims). Values are captured from it first, and it is the
@@ -871,10 +890,15 @@ class SessionService:
                 return
             last_data = outcome.data
             integration_session.current_step += 1
+            if step.redirect is not None:
+                return await self._await_return(
+                    integration_session, step, outcome.data, state
+                )
 
         await self._complete(
             integration_session, client, target, flow, state, last_data
         )
+        return None
 
     async def _run_step(
         self,
@@ -972,6 +996,102 @@ class SessionService:
             integration_session.id,
             ", ".join(missing),
         )
+
+    @staticmethod
+    def _prepare_return(
+        integration_session: IntegrationSession,
+        state: FlowState,
+        redirect_uri: str,
+    ) -> None:
+        """Give a redirect step the URL the provider sends the holder to.
+
+        The client's registered redirect URI gets this session's
+        single-use ``state``, because providers that are not OpenID
+        Connect return without one of their own. Only the hash is kept
+        on the session, the same as for sign-ins.
+        """
+        return_state = secrets.token_urlsafe(32)
+        integration_session.oauth_state_hash = authorization.hash_state(
+            return_state
+        )
+        parts = urlsplit(redirect_uri)
+        query = urlencode([*parse_qsl(parts.query), ("state", return_state)])
+        state.captured[RETURN_URL_VALUE] = urlunsplit(
+            parts._replace(query=query)
+        )
+
+    async def _await_return(
+        self,
+        integration_session: IntegrationSession,
+        step: FlowStep,
+        data: Any,
+        state: FlowState,
+    ) -> SessionNextAction | None:
+        """Pause until the holder comes back from the provider's site.
+
+        Returns the action for the holder, or None if the session failed
+        (no usable URL in the response, or the state could not be saved).
+        """
+        url = read_path(data, step.redirect.url)
+        if not (isinstance(url, str) and policies.is_safe_browser_url(url)):
+            await self._fail(
+                integration_session,
+                StepFailedError(
+                    "unexpected_response",
+                    f"The provider's response to '{step.operation}' had "
+                    f"no usable URL at '{step.redirect.url}'.",
+                ),
+            )
+            return None
+        state.pending_authorization = {"type": RETURN_PENDING}
+        try:
+            await self._save_state(integration_session, state)
+        except SecretStoreError:
+            await self._fail(
+                integration_session,
+                StepFailedError(
+                    "session_state_unavailable",
+                    "The session's progress could not be stored.",
+                ),
+            )
+            return None
+        integration_session.status = SessionStatus.AWAITING_REDIRECT
+        logger.info(
+            "Session %s waiting for the holder to return",
+            integration_session.id,
+        )
+        return SessionNextAction(type="redirect", url=url)
+
+    async def _resume_after_return(
+        self,
+        integration_session: IntegrationSession,
+        client: Client,
+        target: IntegrationTarget,
+        flow: FlowConfig,
+        state: FlowState,
+        callback: SessionAuthorizationCallback,
+    ) -> SessionResponse:
+        """Run the steps after a redirect step once the holder is back.
+
+        The return itself proves nothing: the next steps ask the
+        provider for the result, and their answer decides the outcome.
+        """
+        if callback.error:
+            await self._fail(
+                integration_session,
+                StepFailedError(
+                    "authorization_declined",
+                    "The holder did not finish at the provider.",
+                ),
+            )
+            await self.session.commit()
+            return self._to_response(integration_session)
+        state.pending_authorization = None
+        next_action = await self._advance(
+            integration_session, client, target, flow, state
+        )
+        await self.session.commit()
+        return self._to_response(integration_session, next_action)
 
     async def _begin_authorization(
         self,

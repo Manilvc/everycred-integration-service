@@ -209,6 +209,37 @@ class OAuth2ClientCredentials(BaseModel):
         )
 
 
+# Session value holding the URL a redirect step gives the provider: the
+# client's redirect URI with this session's single-use ``state`` added.
+RETURN_URL_VALUE = "return_url"
+
+
+class StepRedirect(BaseModel):
+    """Send the holder to a URL the step's response holds, then wait.
+
+    For providers whose consent page is not an OpenID Connect sign-in
+    (DigiLocker through SurePass, say): the step starts a session at the
+    provider, which answers with a URL for the holder's browser. The
+    flow pauses as ``awaiting_redirect`` until the client relays the
+    holder's return, then runs the remaining steps.
+
+    Attributes:
+        url: Dot path to the URL in this step's response data.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(max_length=200)
+
+    @field_validator("url")
+    @classmethod
+    def check_url_path(cls, url: str) -> str:
+        """Keep the path a plain dot path, like other response paths."""
+        if not re.fullmatch(_DATA_PATH_PATTERN, url):
+            raise ValueError(f"redirect url path '{url}' is not a dot path")
+        return url
+
+
 class FlowStep(BaseModel):
     """One call inside a flow.
 
@@ -221,6 +252,10 @@ class FlowStep(BaseModel):
             ``name -> dot path`` into this step's response data (e.g.
             ``{"request_ref": "client_id"}``). Later steps read them as
             ``{session.request_ref}``.
+        redirect: After this step, send the holder to the URL in its
+            response and wait for them to return; see
+            :class:`StepRedirect`. The step can pass the return URL to
+            the provider as ``{session.return_url}``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -228,6 +263,7 @@ class FlowStep(BaseModel):
     operation: str
     inputs: list[str] = Field(default_factory=list, max_length=20)
     capture: dict[str, str] = Field(default_factory=dict, max_length=20)
+    redirect: StepRedirect | None = None
 
     @model_validator(mode="after")
     def check_names(self) -> "FlowStep":
@@ -244,6 +280,11 @@ class FlowStep(BaseModel):
         for path in self.capture.values():
             if not re.fullmatch(_DATA_PATH_PATTERN, path):
                 raise ValueError(f"capture path '{path}' is not a dot path")
+        if RETURN_URL_VALUE in self.capture:
+            raise ValueError(
+                f"capture name '{RETURN_URL_VALUE}' is reserved; "
+                "choose another"
+            )
         return self
 
 
@@ -469,8 +510,22 @@ class FlowConfig(BaseModel):
 
     @property
     def kind(self) -> Literal["input", "redirect"]:
-        """``redirect`` when the holder signs in with the provider."""
-        return "redirect" if self.authorization else "input"
+        """``redirect`` when the holder is sent to the provider's site."""
+        if self.authorization or self.redirect_step_index is not None:
+            return "redirect"
+        return "input"
+
+    @property
+    def redirect_step_index(self) -> int | None:
+        """Position of the step that sends the holder away, if any."""
+        return next(
+            (
+                index
+                for index, step in enumerate(self.steps)
+                if step.redirect is not None
+            ),
+            None,
+        )
 
     @model_validator(mode="after")
     def check_outputs(self) -> "FlowConfig":
@@ -493,6 +548,7 @@ class FlowConfig(BaseModel):
             raise ValueError("a gather flow must declare outputs")
         if self.purpose == "gather" and self.verified_when:
             raise ValueError("verified_when applies to verification flows")
+        self._check_redirect_step()
         if self.authorization and self.authorization.steps_as_user:
             if not self.steps:
                 raise ValueError("steps_as_user needs at least one step")
@@ -501,6 +557,24 @@ class FlowConfig(BaseModel):
                 # pauses for inputs would resume without it.
                 raise ValueError("steps_as_user flows may not take inputs")
         return self
+
+    def _check_redirect_step(self) -> None:
+        redirect_steps = [step for step in self.steps if step.redirect]
+        if not redirect_steps:
+            return
+        if len(redirect_steps) > 1:
+            raise ValueError("a flow may send the holder away only once")
+        if self.authorization is not None:
+            raise ValueError(
+                "a flow uses either an authorization or a redirect step"
+            )
+        if self.steps[-1].redirect is not None:
+            # The return carries nothing; a later step has to fetch the
+            # result the holder agreed to share.
+            raise ValueError("a redirect step needs a step after it")
+        if self.all_inputs():
+            # The holder acts on the provider's site, not in a form.
+            raise ValueError("flows with a redirect step may not take inputs")
 
     def all_inputs(self) -> list[str]:
         """Every input any step asks for, in first-use order."""
@@ -662,6 +736,8 @@ class HttpConnectorConfig(BaseModel):
                 if flow.authorization
                 else set()
             )
+            if flow.redirect_step_index is not None:
+                captured.add(RETURN_URL_VALUE)
             for position, step in enumerate(flow.steps, start=1):
                 operation = self.operations.get(step.operation)
                 if operation is None:

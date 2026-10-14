@@ -78,27 +78,27 @@ def check_consent_recent(consent: SessionConsent, now: datetime) -> None:
 def check_redirect_uri(
     flow: FlowConfig, redirect_uri: str | None, settings: dict[str, Any]
 ) -> str | None:
-    """Return the redirect URI for a sign-in flow, after checking it.
+    """Return the redirect URI for a redirect flow, after checking it.
 
     The URI must exactly match one the client registered, so a stolen
     API key alone cannot send holders' authorization codes elsewhere;
     the provider's own redirect URI allow-list is the second check.
 
     Raises:
-        InvalidRedirectUriError: Missing for a sign-in flow, sent for
-            another flow, or not registered.
+        InvalidRedirectUriError: Missing for a flow that sends the
+            holder to the provider, sent for another flow, or not
+            registered.
     """
-    if flow.authorization is None:
+    if flow.kind != "redirect":
         if redirect_uri is not None:
             raise InvalidRedirectUriError(
-                "This flow does not sign in with the provider; omit "
+                "This flow does not send the holder to the provider; omit "
                 "redirect_uri."
             )
         return None
     if redirect_uri is None:
         raise InvalidRedirectUriError(
-            "This flow signs the holder in with the provider; send "
-            "redirect_uri."
+            "This flow sends the holder to the provider; send redirect_uri."
         )
     parts = urlsplit(redirect_uri)
     is_local = parts.hostname in LOCAL_HOSTS
@@ -117,6 +117,21 @@ def check_redirect_uri(
             f"'{REDIRECT_URIS_SETTING}' for this integration type."
         )
     return redirect_uri
+
+
+def is_safe_browser_url(url: str) -> bool:
+    """Return True if a provider's URL may be shown to the holder's browser.
+
+    Only https (or http on a local host, for development), and never
+    with credentials in it, so a broken or hostile provider response
+    cannot send the holder to a plain-text or javascript: page.
+    """
+    parts = urlsplit(url)
+    if parts.username or parts.password or not parts.hostname:
+        return False
+    return parts.scheme == "https" or (
+        parts.scheme == "http" and parts.hostname in LOCAL_HOSTS
+    )
 
 
 def check_requested_attributes(

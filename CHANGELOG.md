@@ -25,6 +25,13 @@
 
 ### Added
 
+- Flow steps can set `redirect` to send the holder to a page the
+  provider's response names (DigiLocker through SurePass, say). The
+  session waits as `awaiting_redirect`, the step passes the provider
+  `{session.return_url}` (the client's redirect URI with a single-use
+  `state`), and relaying that `state` to the authorization callback
+  runs the remaining steps. `docs/examples/surepass-digilocker-flow.json`
+  configures SurePass DigiLocker this way, with no SurePass code.
 - Sign-in flows can set `authorization.steps_as_user`: their steps call
   the provider with the signed-in user's access token, so a flow reads
   only that user's data (Graph `/me` with delegated `User.Read`) and

@@ -107,6 +107,37 @@ SurePass's environment from its drawer,
 `PUT /v1/client/integrations/surepass` with `{"settings": {...}}`, but
 only to a name the tool defines, never to a URL.
 
+## DigiLocker (holder approves on the DigiLocker page)
+
+`docs/examples/surepass-digilocker-flow.json` adds a Confirm flow,
+`digilocker`, to the `surepass` tool, using the generic
+[redirect step](../connectors.md#redirect-steps). There is no SurePass
+code:
+
+1. `digilocker_initialize` calls `POST /digilocker/initialize` with
+   `redirect_url` = `{session.return_url}`, keeps `client_id`, and the
+   session returns SurePass's `url` as `next_action.url`.
+2. The holder approves in DigiLocker and is sent back to the client's
+   redirect URI with this session's `state`; the client relays it to
+   `POST /v1/client/sessions/authorization-callback`.
+3. `digilocker_download_aadhaar` calls
+   `GET /digilocker/download-aadhaar/{client_id}`; the session is
+   `verified` when `aadhaar_xml_data.full_name` is present.
+
+To add it, merge the file's `operations` and `flows` into the tool's
+`connector_config`, and its `fields` into the tool's field list, then
+save the tool (`PUT /v1/integration-tools/surepass`, the whole
+definition). Fields of other flows that are left out of `fields` are
+removed, so keep `aadhaar_otp`'s fields in the list if you still use
+that flow.
+
+For each client, put the client backend's callback URL in SurePass's
+`redirect_uris` setting (`PUT /v1/clients/<client_id>/integrations/confirm`
+with `"tool_code": "surepass"` and `"settings": {"environment": ...,
+"redirect_uris": [...]}`). Client fields map to the `digilocker`
+flow's field ids, such as `aadhaar_xml_data.full_name`, not to the
+`aadhaar_otp` ones.
+
 ## 4. Your backend: connect a user and run operations
 
 All calls use the client's `X-API-Key`.

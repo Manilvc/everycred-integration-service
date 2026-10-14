@@ -240,6 +240,52 @@ The client must register its redirect URI with the provider and in its
 `redirect_uris` setting; see
 [sessions](features/sessions.md#sign-in-flows).
 
+#### Redirect steps
+
+Some providers show the holder a consent page that is not an OpenID
+Connect sign-in: a step starts a session and the provider answers with
+a URL, and after the holder approves, a later step reads the result
+(DigiLocker through SurePass, say). Mark that step with `redirect`:
+
+```json
+"digilocker": {
+  "purpose": "verification",
+  "steps": [
+    {
+      "operation": "digilocker_initialize",
+      "capture": {"client_ref": "client_id"},
+      "redirect": {"url": "url"}
+    },
+    {"operation": "digilocker_download_aadhaar"}
+  ],
+  "outputs": {"full_name": "aadhaar_xml_data.full_name"},
+  "verified_when": [{"path": "aadhaar_xml_data.full_name"}]
+}
+```
+
+- `redirect.url` is the dot path to the page in the step's response.
+  The session returns it as `next_action.url` and waits as
+  `awaiting_redirect`. Only `https` URLs (or `http` on a local host)
+  without credentials are passed on; anything else fails the session
+  with `unexpected_response`.
+- The step tells the provider where to send the holder back with
+  `{session.return_url}`: the client's `redirect_uri` with this
+  session's single-use `state` added, because such providers return
+  without a `state` of their own.
+- The client relays the return to
+  `POST /v1/client/sessions/authorization-callback` with only `state`
+  (or `error`), and the steps after the redirect step run. The return
+  proves nothing by itself: those steps ask the provider for the
+  result, and their answer and `verified_when` decide the outcome.
+- A flow has at most one redirect step, it may not be the last step,
+  the flow takes no inputs, and it cannot also have an `authorization`.
+  `return_url` is a reserved session name.
+- The flow's `kind` is `redirect`, so `redirect_uri` is required when
+  starting it and must be in the client's `redirect_uris` setting for
+  the tool.
+
+See `docs/examples/surepass-digilocker-flow.json`.
+
 ### Built-in tools
 
 A Python connector can set `is_built_in = True` for a tool EveryCRED

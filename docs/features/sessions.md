@@ -218,6 +218,11 @@ holder cancelled, say); the session fails with
 `authorization_declined`. `state` works once: it is cleared before the
 code is exchanged, so a replay gets `404 authorization_not_found`.
 
+For a flow with a [redirect step](../connectors.md#redirect-steps) the
+provider returns the holder with only the `state` this service put in
+the return URL: send `{"state": "..."}` alone, and the remaining steps
+run straight away.
+
 ### Result
 
 ```json
