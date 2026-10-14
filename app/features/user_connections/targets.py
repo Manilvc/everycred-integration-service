@@ -2,9 +2,10 @@
 
 User connections and verification/gather sessions both need the same
 chain of checks: the type exists and is enabled for the client, a tool
-is chosen, the tool is active and not switched off by the client, and
-it has a connector. This module owns that chain, and builds the
-connector with the client's credentials from the secret store.
+is chosen (the caller's, or the type's default), the tool serves the
+type, is active and not switched off by the client, and it has a
+connector. This module owns that chain, and builds the connector with
+the client's credentials and settings.
 """
 
 import uuid
@@ -22,6 +23,7 @@ from app.connectors.registry import ConnectorRegistry
 from app.connectors.resolution import resolve_connector
 from app.core.exceptions import AppError
 from app.core.secret_store import SecretStore
+from app.features.client_integrations.models import ClientToolConnection
 from app.features.client_integrations.repository import (
     ClientToolConnectionRepository,
 )
@@ -31,7 +33,13 @@ from app.features.clients.repository import (
     ClientIntegrationConfigRepository,
     ClientToolCredentialRepository,
 )
+from app.features.integration_tools.exceptions import (
+    IntegrationToolNotFoundError,
+)
 from app.features.integration_tools.models import IntegrationTool
+from app.features.integration_tools.repository import (
+    IntegrationToolRepository,
+)
 from app.features.integration_types.exceptions import (
     IntegrationTypeNotFoundError,
 )
@@ -49,6 +57,21 @@ from app.features.user_connections.exceptions import (
 )
 
 
+def effective_settings(
+    client_config: ClientIntegrationConfig | None,
+    tool_connection: ClientToolConnection | None,
+) -> dict[str, Any]:
+    """Merge the type's settings with the tool's, the tool's winning.
+
+    Provider options such as ``environment`` are kept per tool, so each
+    tool a type uses can point at its own environment.
+    """
+    return {
+        **(client_config.settings if client_config else {}),
+        **(tool_connection.settings if tool_connection else {}),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class IntegrationTarget:
     """Everything needed to call a tool for one client."""
@@ -57,6 +80,17 @@ class IntegrationTarget:
     client_config: ClientIntegrationConfig
     tool: IntegrationTool
     connector_class: type[IntegrationConnector]
+    tool_connection: ClientToolConnection | None = None
+
+    @property
+    def settings(self) -> dict[str, Any]:
+        """The client's settings for calls through this tool."""
+        return effective_settings(self.client_config, self.tool_connection)
+
+    @property
+    def is_default_tool(self) -> bool:
+        """Whether this is the tool the type uses when none is named."""
+        return self.client_config.integration_tool_id == self.tool.id
 
 
 class IntegrationTargetResolver:
@@ -71,9 +105,11 @@ class IntegrationTargetResolver:
         secret_store: SecretStore,
         registry: ConnectorRegistry,
         http_client: httpx.AsyncClient,
+        tools: IntegrationToolRepository,
     ) -> None:
         self.integration_types = integration_types
         self.client_configs = client_configs
+        self.tools = tools
         self.tool_connections = tool_connections
         self.credentials = credentials
         self.secret_store = secret_store
@@ -113,13 +149,24 @@ class IntegrationTargetResolver:
             raise IntegrationNotEnabledError(code)
         return integration_type, client_config
 
-    async def resolve(self, client: Client, code: str) -> IntegrationTarget:
-        """Return the callable tool the client uses for type ``code``.
+    async def resolve(
+        self, client: Client, code: str, tool_code: str | None = None
+    ) -> IntegrationTarget:
+        """Return a callable tool the client uses for type ``code``.
+
+        Args:
+            client: The calling client.
+            code: Integration type code.
+            tool_code: A specific tool serving the type; the type's
+                default tool when None.
 
         Raises:
             IntegrationTypeNotFoundError: No type has this code.
             IntegrationNotEnabledError: The type is not enabled.
-            IntegrationToolNotSelectedError: No tool chosen for it.
+            IntegrationToolNotSelectedError: No tool named and no
+                default chosen.
+            IntegrationToolNotFoundError: ``tool_code`` is unknown or
+                does not serve the type.
             IntegrationToolInactiveError: The tool is inactive.
             IntegrationToolDisabledError: The client switched it off.
             ConnectorNotAvailableError: The tool has no connector.
@@ -127,9 +174,15 @@ class IntegrationTargetResolver:
         integration_type, client_config = await self.enabled_integration(
             client, code
         )
-        tool = client_config.integration_tool
-        if tool is None:
-            raise IntegrationToolNotSelectedError(code)
+        if tool_code is None:
+            tool = client_config.integration_tool
+            if tool is None:
+                raise IntegrationToolNotSelectedError(code)
+        else:
+            tool = await self.tools.get_by_code(tool_code)
+            if tool is None or not tool.serves(integration_type.id):
+                # Same answer for both, so the catalogue is not exposed.
+                raise IntegrationToolNotFoundError(tool_code)
         if not tool.is_active:
             raise IntegrationToolInactiveError(tool.code)
         tool_connection = await self.tool_connections.get(client.id, tool.id)
@@ -141,7 +194,11 @@ class IntegrationTargetResolver:
         if connector_class is None:
             raise ConnectorNotAvailableError(tool.code)
         return IntegrationTarget(
-            integration_type, client_config, tool, connector_class
+            integration_type,
+            client_config,
+            tool,
+            connector_class,
+            tool_connection,
         )
 
     async def build_connector(
@@ -152,6 +209,7 @@ class IntegrationTargetResolver:
         *,
         credentials: dict[str, Any] | None = None,
         session_values: dict[str, Any] | None = None,
+        user_access_token: str | None = None,
     ) -> IntegrationConnector:
         """Instantiate the connector with the client's credentials.
 
@@ -162,6 +220,8 @@ class IntegrationTargetResolver:
             credentials: Already-loaded credentials, to avoid reading the
                 secret store again for every step of a flow.
             session_values: Values captured by earlier flow steps.
+            user_access_token: The signed-in user's token, for flows
+                that run their steps as the user.
         """
         if credentials is None:
             credentials = await self.load_credentials(client, target.tool)
@@ -171,11 +231,12 @@ class IntegrationTargetResolver:
                 user_uuid=user_uuid,
                 integration_type_code=target.integration_type.code,
                 tool_code=target.tool.code,
-                client_settings=target.client_config.settings,
+                client_settings=target.settings,
                 http_client=self.http_client,
                 credentials=credentials,
                 tool_config=target.tool.connector_config,
                 session_values=session_values or {},
+                user_access_token=user_access_token,
             )
         )
 

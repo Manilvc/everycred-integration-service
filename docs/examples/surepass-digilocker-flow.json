@@ -1,0 +1,53 @@
+{
+  "operations": {
+    "digilocker_initialize": {
+      "method": "POST",
+      "path": "/digilocker/initialize",
+      "description": "Start a DigiLocker consent session; returns the page for the holder",
+      "body": {
+        "data": {
+          "signup_flow": false,
+          "redirect_url": "{session.return_url}"
+        }
+      }
+    },
+    "digilocker_download_aadhaar": {
+      "method": "GET",
+      "path": "/digilocker/download-aadhaar/{session.client_ref}",
+      "description": "Read the Aadhaar the holder shared in DigiLocker"
+    }
+  },
+  "flows": {
+    "digilocker": {
+      "purpose": "verification",
+      "description": "Share your Aadhaar from DigiLocker",
+      "steps": [
+        {
+          "operation": "digilocker_initialize",
+          "capture": {"client_ref": "client_id"},
+          "redirect": {"url": "url"}
+        },
+        {"operation": "digilocker_download_aadhaar"}
+      ],
+      "outputs": {
+        "full_name": "aadhaar_xml_data.full_name",
+        "date_of_birth": "aadhaar_xml_data.dob",
+        "gender": "aadhaar_xml_data.gender",
+        "zip": "aadhaar_xml_data.zip",
+        "provider_reference": "session.client_ref"
+      },
+      "verified_when": [{"path": "aadhaar_xml_data.full_name"}]
+    }
+  },
+  "fields": [
+    {"flow": "digilocker", "key": "aadhaar_xml_data.full_name", "label": "Full name"},
+    {"flow": "digilocker", "key": "aadhaar_xml_data.dob", "label": "Date of birth"},
+    {"flow": "digilocker", "key": "aadhaar_xml_data.gender", "label": "Gender"},
+    {"flow": "digilocker", "key": "aadhaar_xml_data.zip", "label": "ZIP code"},
+    {"flow": "digilocker", "key": "aadhaar_xml_data.care_of", "label": "Care of"},
+    {"flow": "digilocker", "key": "aadhaar_xml_data.father_name", "label": "Father's name"},
+    {"flow": "digilocker", "key": "aadhaar_xml_data.full_address", "label": "Address"},
+    {"flow": "digilocker", "key": "aadhaar_xml_data.masked_aadhaar", "label": "Masked Aadhaar"},
+    {"flow": "digilocker", "key": "aadhaar_xml_data.profile_image", "label": "Photo"}
+  ]
+}

@@ -3,8 +3,10 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     ForeignKey,
     String,
@@ -49,6 +51,9 @@ class ClientToolConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         status: Outcome of the last Test connection.
         last_tested_at: When Test connection last ran.
         last_test_message: Safe summary of the last test.
+        settings: Non-secret options for this tool only, such as the
+            provider ``environment``. They override the type's settings
+            when the tool is called.
     """
 
     __tablename__ = "client_tool_connections"
@@ -88,4 +93,7 @@ class ClientToolConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_tested_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     last_test_message: Mapped[str | None] = mapped_column(
         String(TEST_MESSAGE_MAX_LENGTH)
+    )
+    settings: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
     )

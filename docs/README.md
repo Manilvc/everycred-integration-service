@@ -1,6 +1,6 @@
 # Integration Service Documentation
 
-> Last updated: 2026-09-29
+> Last updated: 2026-10-05
 
 ## Layout
 
@@ -24,6 +24,7 @@ app/
 │   ├── encryption.py    # Fernet encryption for stored secrets
 │   ├── secret_store.py  # AWS Secrets Manager + KMS, local fallback
 │   ├── data_paths.py    # read_path(): dot paths into provider responses
+│   ├── media.py         # Tool logos: S3 or local store, public links
 │   └── http_client.py   # Shared httpx client, HttpClient dependency
 ├── shared/              # Feature-agnostic schemas and helpers
 │   ├── schemas.py       # ErrorResponse, Page[ItemT]
@@ -33,7 +34,7 @@ app/
     ├── health/          # Liveness and readiness probes
     ├── integration_tools/ # Tools that fulfil types; client tool listing
     ├── integration_types/ # Catalogue of integration types (DB-driven)
-    ├── sessions/        # Confirm (verification) and Gather sessions
+    ├── sessions/        # Confirm and Gather sessions, consent, sign-in
     ├── super_admins/    # Super admin registration, login, profile
     ├── user_connections/ # Per-user connections run through connectors
     └── webhooks/        # Client webhook endpoint and signed deliveries
@@ -107,6 +108,7 @@ Core modules:
 - [encryption](core/encryption.md)
 - [secret_store](core/secret_store.md)
 - [data_paths](core/data_paths.md)
+- [media](core/media.md)
 
 Features:
 
@@ -132,3 +134,4 @@ Operations:
 Integrations:
 
 - [SurePass](integrations/surepass.md)
+- [Microsoft Entra ID](integrations/microsoft-entra-id.md)

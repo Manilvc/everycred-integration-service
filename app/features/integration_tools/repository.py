@@ -26,6 +26,10 @@ class IntegrationToolRepository:
             select(IntegrationTool).where(IntegrationTool.code == code)
         )
 
+    async def get_by_id(self, tool_id: uuid.UUID) -> IntegrationTool | None:
+        """Return the tool with this id, or None."""
+        return await self.session.get(IntegrationTool, tool_id)
+
     async def list_active_for_types(
         self, integration_type_ids: Collection[uuid.UUID]
     ) -> Sequence[IntegrationTool]:
@@ -153,6 +157,37 @@ class IntegrationToolFieldRepository:
             .offset(offset)
         )
         return fields.all(), total or 0
+
+    async def list_visible_to_client(
+        self,
+        integration_tool_id: uuid.UUID,
+        client_id: uuid.UUID,
+        *,
+        flow: str | None = None,
+        field_ids: Collection[uuid.UUID] | None = None,
+    ) -> Sequence[IntegrationToolField]:
+        """Return the tool's global fields and the client's own.
+
+        Args:
+            integration_tool_id: Tool whose fields to return.
+            client_id: Client whose own fields are included.
+            flow: Keep only fields of this flow.
+            field_ids: Keep only these fields.
+        """
+        filters = [
+            IntegrationToolField.integration_tool_id == integration_tool_id,
+            self._in_scopes([None, client_id]),
+        ]
+        if flow is not None:
+            filters.append(IntegrationToolField.flow == flow)
+        if field_ids is not None:
+            filters.append(IntegrationToolField.id.in_(list(field_ids)))
+        fields = await self.session.scalars(
+            select(IntegrationToolField)
+            .where(*filters)
+            .order_by(IntegrationToolField.flow, IntegrationToolField.key)
+        )
+        return fields.all()
 
     async def replace(
         self,

@@ -22,6 +22,7 @@ from app.features.integration_tools.models import TOOL_CODE_MAX_LENGTH
 from app.features.integration_tools.schemas import (
     ClientToolQuery,
     IntegrationToolFieldResponse,
+    IntegrationToolPatch,
     IntegrationToolQuery,
     IntegrationToolResponse,
     IntegrationToolUpsert,
@@ -112,6 +113,39 @@ async def upsert_integration_tool(
 
 
 ToolCode = Annotated[str, Path(min_length=1, max_length=TOOL_CODE_MAX_LENGTH)]
+
+
+@admin_router.patch(
+    "/{tool_code}",
+    response_model=IntegrationToolResponse,
+    summary="Update part of an integration tool",
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "No tool has this code",
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ErrorResponse,
+            "description": "Invalid change, connector config, or type",
+        },
+    },
+)
+async def update_integration_tool(
+    tool_code: ToolCode,
+    changes: IntegrationToolPatch,
+    service: IntegrationToolServiceDep,
+) -> IntegrationToolResponse:
+    """Change only the fields sent; everything else keeps its value.
+
+    For example, `{"logo": "data:image/png;base64,..."}` replaces just
+    the logo, and `{"is_active": false}` just hides the tool.
+    `connector_config`, `fields`, and `integration_types` are replaced
+    as a whole when sent. `null` removes `provider`, `description`,
+    `connector_config`, or `logo`; the other fields cannot be null.
+    """
+    return await service.update_tool(tool_code, changes)
+
+
 _FIELDS_DESCRIPTION = """
 Field keys a super admin entered for the tool: the keys a flow's
 provider response holds, such as `full_name` or `address.zip` (nested

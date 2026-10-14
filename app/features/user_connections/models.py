@@ -15,7 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.core.models import (
@@ -25,6 +25,7 @@ from app.core.models import (
     utc_now,
 )
 from app.core.secret_store import SECRET_REFERENCE_MAX_LENGTH
+from app.features.integration_tools.models import IntegrationTool
 
 LAST_ERROR_MAX_LENGTH = 500
 
@@ -38,7 +39,11 @@ class ConnectionStatus(StrEnum):
 
 
 class UserIntegrationConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """One client user's connection to one integration type.
+    """One client user's connection to one tool of an integration type.
+
+    A user may be connected to several tools of the same type, for
+    example SurePass and Microsoft Entra ID for Confirm, each with its
+    own inputs and status.
 
     Attributes:
         client_id: Client project the user belongs to.
@@ -46,6 +51,9 @@ class UserIntegrationConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             service keeps no user records; the pair (client, user) is
             the identity.
         integration_type_id: Integration the user is connected to.
+        integration_tool_id: Tool the connection runs through. Null only
+            for inputs saved while the type had no tool; they are taken
+            over by the type's default tool once it has one.
         parameters_secret_reference: Where the user's
             ``{"args": [...], "kwargs": {...}}`` are kept in the secret
             store (a Secrets Manager ARN in deployed environments).
@@ -65,7 +73,8 @@ class UserIntegrationConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "client_id",
             "user_uuid",
             "integration_type_id",
-            name="uq_user_integration_connections_user_type",
+            "integration_tool_id",
+            name="uq_user_integration_connections_user_tool",
         ),
         Index(
             "ix_user_integration_connections_client_user",
@@ -94,6 +103,16 @@ class UserIntegrationConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    # RESTRICT: a tool in use must be deactivated rather than deleted.
+    integration_tool_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "integration_tools.id",
+            ondelete="RESTRICT",
+            name="fk_user_integration_connections_tool",
+        ),
+        index=True,
+    )
     parameters_secret_reference: Mapped[str] = mapped_column(
         String(SECRET_REFERENCE_MAX_LENGTH), nullable=False
     )
@@ -111,6 +130,10 @@ class UserIntegrationConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     last_attempt_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     last_connected_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+    integration_tool: Mapped[IntegrationTool | None] = relationship(
+        lazy="selectin"
+    )
 
 
 class IntegrationOperationLog(UUIDPrimaryKeyMixin, Base):

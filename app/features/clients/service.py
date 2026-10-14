@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,10 @@ from app.core.api_keys import (
 from app.core.config import Settings
 from app.core.models import utc_now
 from app.core.secret_store import SecretStore, SecretStoreError
+from app.features.client_integrations.models import ClientToolConnection
+from app.features.client_integrations.repository import (
+    ClientToolConnectionRepository,
+)
 from app.features.clients.exceptions import (
     ApiKeyNotFoundError,
     ClientCodeTakenError,
@@ -45,6 +50,7 @@ from app.features.clients.schemas import (
     ClientResponse,
     ClientSettingsUpdate,
     ClientSummary,
+    ConfiguredToolResponse,
     IntegrationConfigResponse,
     IntegrationConfigUpdate,
     ToolCredentialsResponse,
@@ -67,6 +73,7 @@ from app.features.integration_types.repository import (
     IntegrationTypeRepository,
 )
 from app.features.super_admins.models import SuperAdmin
+from app.features.user_connections.targets import effective_settings
 from app.shared.schemas import Page
 
 logger = logging.getLogger(__name__)
@@ -91,22 +98,6 @@ async def _get_client_or_raise(
     if client is None:
         raise ClientNotFoundError(client_id)
     return client
-
-
-def _to_config_response(
-    config: ClientIntegrationConfig, integration_type: IntegrationType
-) -> IntegrationConfigResponse:
-    tool = config.integration_tool
-    return IntegrationConfigResponse(
-        integration_type_code=integration_type.code,
-        integration_type_name=integration_type.name,
-        integration_tool=(
-            IntegrationToolSummary.model_validate(tool) if tool else None
-        ),
-        is_enabled=config.is_enabled,
-        settings=config.settings,
-        updated_at=config.updated_at,
-    )
 
 
 class ClientService:
@@ -313,12 +304,14 @@ class ClientConfigurationService:
         configs: ClientIntegrationConfigRepository,
         integration_types: IntegrationTypeRepository,
         integration_tools: IntegrationToolRepository,
+        tool_connections: ClientToolConnectionRepository,
     ) -> None:
         self.session = session
         self.clients = clients
         self.configs = configs
         self.integration_types = integration_types
         self.integration_tools = integration_tools
+        self.tool_connections = tool_connections
 
     async def list_configs(
         self, client_id: uuid.UUID
@@ -330,10 +323,7 @@ class ClientConfigurationService:
         """
         await _get_client_or_raise(self.clients, client_id)
         rows = await self.configs.list_with_types(client_id, usable_only=False)
-        return [
-            _to_config_response(config, integration_type)
-            for config, integration_type in rows
-        ]
+        return await self._to_responses(client_id, rows)
 
     async def set_config(
         self,
@@ -341,7 +331,13 @@ class ClientConfigurationService:
         integration_type_code: str,
         update: IntegrationConfigUpdate,
     ) -> IntegrationConfigResponse:
-        """Create or replace a client's configuration for one type.
+        """Enable a type for a client and configure one of its tools.
+
+        With ``tool_code``, ``settings`` are saved for that tool only, so
+        other tools of the type keep theirs; the tool becomes the
+        default when ``is_default`` is set or the type has none yet.
+        Without it, the default tool is cleared and ``settings`` apply
+        to the whole type.
 
         Raises:
             ClientNotFoundError: No client has this id.
@@ -366,18 +362,115 @@ class ClientConfigurationService:
             )
             self.configs.add(config)
         config.is_enabled = update.is_enabled
-        config.integration_tool = tool
-        config.settings = update.settings
+        if tool is None:
+            config.integration_tool = None
+            config.settings = update.settings
+        else:
+            if update.is_default or config.integration_tool_id is None:
+                config.integration_tool = tool
+            await self._save_tool_settings(client_id, tool, update.settings)
         await self.session.commit()
 
         logger.info(
-            "Client %s configuration for %s updated (enabled=%s, tool=%s)",
+            "Client %s configuration for %s updated (enabled=%s, tool=%s, "
+            "default=%s)",
             client_id,
             integration_type.code,
             update.is_enabled,
             tool.code if tool else None,
+            config.integration_tool.code if config.integration_tool else None,
         )
-        return _to_config_response(config, integration_type)
+        return await self._to_response(client_id, config, integration_type)
+
+    async def _save_tool_settings(
+        self,
+        client_id: uuid.UUID,
+        tool: IntegrationTool,
+        settings: dict[str, Any],
+    ) -> None:
+        connection = await self.tool_connections.get(client_id, tool.id)
+        if connection is None:
+            if not settings:
+                # Nothing to keep; without a row the tool's card and
+                # switch behave as before it was configured.
+                return
+            connection = ClientToolConnection(
+                client_id=client_id,
+                integration_tool_id=tool.id,
+                is_enabled=True,
+            )
+            self.tool_connections.add(connection)
+        connection.settings = settings
+
+    async def _to_response(
+        self,
+        client_id: uuid.UUID,
+        config: ClientIntegrationConfig,
+        integration_type: IntegrationType,
+    ) -> IntegrationConfigResponse:
+        (response,) = await self._to_responses(
+            client_id, [(config, integration_type)]
+        )
+        return response
+
+    async def _to_responses(
+        self,
+        client_id: uuid.UUID,
+        rows: Sequence[tuple[ClientIntegrationConfig, IntegrationType]],
+    ) -> list[IntegrationConfigResponse]:
+        """Describe configurations with every tool set up for each type.
+
+        A tool counts as configured for a type when it serves the type
+        and the client has a row for it, or when it is the default.
+        """
+        connections = await self.tool_connections.by_tool_for_client(client_id)
+        tools = await self.integration_tools.list_active_for_types(
+            [integration_type.id for _, integration_type in rows]
+        )
+        responses = []
+        for config, integration_type in rows:
+            default_tool = config.integration_tool
+            configured = [
+                ConfiguredToolResponse(
+                    tool=IntegrationToolSummary.model_validate(tool),
+                    is_default=tool.id == config.integration_tool_id,
+                    is_enabled=(
+                        connections[tool.id].is_enabled
+                        if tool.id in connections
+                        else True
+                    ),
+                    settings=effective_settings(
+                        config, connections.get(tool.id)
+                    ),
+                )
+                for tool in tools
+                if tool.serves(integration_type.id)
+                and (
+                    tool.id in connections
+                    or tool.id == config.integration_tool_id
+                )
+            ]
+            responses.append(
+                IntegrationConfigResponse(
+                    integration_type_code=integration_type.code,
+                    integration_type_name=integration_type.name,
+                    integration_tool=(
+                        IntegrationToolSummary.model_validate(default_tool)
+                        if default_tool
+                        else None
+                    ),
+                    is_enabled=config.is_enabled,
+                    settings=effective_settings(
+                        config,
+                        connections.get(default_tool.id)
+                        if default_tool
+                        else None,
+                    ),
+                    tools=configured,
+                    updated_at=config.updated_at,
+                )
+            )
+        return responses
 
     async def update_own_settings(
         self,
@@ -387,7 +480,9 @@ class ClientConfigurationService:
     ) -> IntegrationConfigResponse:
         """Replace a client's settings for a type it has been given.
 
-        Only ``settings`` change; whether the type is enabled and which
+        The settings apply to the type's default tool (other tools keep
+        theirs), or to the type when it has no tool. Only ``settings``
+        change; whether the type is enabled and which
         tool it uses stay under super admin control.
 
         Raises:
@@ -409,14 +504,22 @@ class ClientConfigurationService:
         ):
             raise IntegrationNotEnabledError(integration_type_code)
 
-        config.settings = update.settings
+        # Settings live with the tool the type uses by default, where
+        # the super admin also sets them; a type without a tool keeps
+        # them itself.
+        if config.integration_tool is None:
+            config.settings = update.settings
+        else:
+            await self._save_tool_settings(
+                client.id, config.integration_tool, update.settings
+            )
         await self.session.commit()
         logger.info(
             "Client %s updated its own %s settings",
             client.id,
             integration_type.code,
         )
-        return _to_config_response(config, integration_type)
+        return await self._to_response(client.id, config, integration_type)
 
     async def _resolve_tool(
         self, tool_code: str | None, integration_type: IntegrationType
@@ -448,10 +551,7 @@ class ClientConfigurationService:
         rows = await self.configs.list_with_types(client.id, usable_only=True)
         return ClientConfigurationResponse(
             client=ClientSummary.model_validate(client),
-            integrations=[
-                _to_config_response(config, integration_type)
-                for config, integration_type in rows
-            ],
+            integrations=await self._to_responses(client.id, rows),
         )
 
 

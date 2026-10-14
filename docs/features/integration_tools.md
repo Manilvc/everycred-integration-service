@@ -1,7 +1,7 @@
 # Integration Tools
 
 > Package: `app/features/integration_tools/`
-> Last updated: 2026-10-02
+> Last updated: 2026-10-13
 
 ## Overview
 
@@ -29,6 +29,7 @@ erDiagram
 | GET | `/v1/integration-tools` | Super admin | Whole catalogue |
 | GET | `/v1/client/integration-tools` | `X-API-Key` | Tools usable for the calling client |
 | PUT | `/v1/integration-tools/{tool_code}` | Super admin | Create or replace a tool, including its `connector_config` |
+| PATCH | `/v1/integration-tools/{tool_code}` | Super admin | Change only the fields sent; see [Partial update](#partial-update) |
 | GET | `/v1/integration-tools/{tool_code}/fields` | Super admin | The tool's global field keys (set with `fields` on `PUT /v1/integration-tools/{tool_code}`) |
 | GET, PUT | `/v1/clients/{client_id}/tools/{tool_code}/fields` | Super admin | One client's own field keys |
 | GET | `/v1/client/integration-tools/{tool_code}/fields` | `X-API-Key` | Global and own field keys, for a tool serving one of the client's enabled types |
@@ -209,6 +210,54 @@ the same key.
 | `label` | Optional display name |
 | `value_type` | `string`, `number`, `boolean`, `object`, or `array` |
 
+## Partial update
+
+`PUT` replaces the whole definition: a field left out is reset, and a
+missing `connector_config` removes the connector. To change one thing,
+use `PATCH`, which changes only the fields in the body:
+
+```json
+PATCH /v1/integration-tools/surepass
+{"is_active": false}
+```
+
+| Field | Left out | Sent | `null` |
+|-------|----------|------|--------|
+| `name`, `is_active`, `display_order` | Kept | Replaced | `422` |
+| `integration_types` | Kept | Replaces the whole list | `422` |
+| `provider`, `description` | Kept | Replaced | Cleared |
+| `connector_config` | Kept | Replaces the whole config | Removes the connector |
+| `fields` | Kept | Replaces the global list (`[]` removes it) | `422` |
+| `logo` | Kept | Replaces the logo | Removes the logo |
+
+An empty body or an unknown field gets `422`; an unknown tool code gets
+`404 integration_tool_not_found`. `fields` are checked against the
+tool's flows: the stored config, or the new one when both are sent.
+
+## Logo
+
+Send the logo as base64 (optionally a data URI), with `PATCH` to change
+only the logo or as part of a full `PUT`. PNG, JPEG, or WebP, at most
+1 MB:
+
+```json
+PATCH /v1/integration-tools/surepass
+{"logo": "data:image/png;base64,iVBORw0KGgo…"}
+```
+
+| `logo` in the body | Effect |
+|--------------------|--------|
+| left out | Keeps the current logo |
+| base64 / data URI | Stores a new file and replaces the logo |
+| `null` | Removes the logo |
+
+The file goes to S3 (or the local folder in development); only its key
+is saved in `integration_tools.logo_path`. Every listing returns the
+full link as `logo_url` (`null` when there is none): the admin and
+client tool listings, the client Integrations screen and drawer, the
+user integrations listing, and `integration_tool` in client
+configurations and user connections. See [media](../core/media.md).
+
 ## Data model
 
 | Table | Key columns | Notes |
@@ -225,3 +274,6 @@ Migration: `f536a4db8356`.
   listings, filters, parameter description.
 - `tests/features/integration_tools/test_client_configuration.py` —
   tool choice validation and client-edited settings.
+- `tests/features/integration_tools/test_tool_patch.py` — partial
+  updates: only sent fields change, logo replace/remove, validation,
+  404, and a failed logo store leaving the tool unchanged.

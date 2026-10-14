@@ -1,20 +1,49 @@
 # User Connections
 
 > Package: `app/features/user_connections/` (connectors in `app/connectors/`)
-> Last updated: 2026-10-02
+> Last updated: 2026-10-14
 
 ## Overview
 
 A client project connects each of **its own users** to the integrations
-it has enabled. For every (user, integration type) pair the client
-stores the positional and keyword arguments the integration tool needs,
-and then asks the service to connect. The service calls the connector
-the client chose for that type (see
-[integration tools](integration_tools.md)) as:
+it has enabled. For every (user, tool) pair the client stores the
+positional and keyword arguments the integration tool needs, and then
+asks the service to connect. The service calls that tool's connector
+(see [integration tools](integration_tools.md)) as:
 
 ```python
 await connector.connect(*args, **kwargs)
 ```
+
+A type can have several tools, and a user has a separate connection to
+each: connecting a user to SurePass and to Microsoft Entra ID for
+Confirm keeps two connections, each with its own inputs and status.
+
+The connection URL names the **tool**, by code or id. The integration
+type is the one the tool serves for the client:
+
+```bash
+# The user's SurePass connection
+curl -X PUT "https://<host>/integration/v1/client/users/<user_uuid>/connections/surepass" \
+  -H "X-API-Key: <client api key>" -H "Content-Type: application/json" \
+  -d '{"kwargs": {"id_number": "<aadhaar>"}}'
+
+# The same user's Entra ID connection, kept alongside it
+curl -X PUT "https://<host>/integration/v1/client/users/<user_uuid>/connections/entra-id-signin" \
+  -H "X-API-Key: <client api key>" -H "Content-Type: application/json" \
+  -d '{"kwargs": {}}'
+```
+
+| `{code}` in the URL | Connection |
+|---------------------|------------|
+| Tool code or id (`surepass`) | That tool. When it serves several of the client's types, add `?integration_type=confirm`, or the call fails with `422 integration_type_required` |
+| Integration type code (`confirm`) | The tool in `?tool_code=`, or the type's default tool. Kept for existing callers; type codes are matched before tool codes |
+
+A tool in the path and a different `tool_code` answer
+`422 conflicting_tool_code`. A tool that does not serve the type answers
+`404 integration_tool_not_found`. Inputs saved while a type has no tool
+stay `pending` with `integration_tool: null`, and are taken over by the
+tool that becomes the type's default.
 
 The user is identified by the client's own `user_uuid`; this service
 keeps no user accounts. The client is identified by its API key, never
@@ -37,19 +66,23 @@ All routes require `X-API-Key`.
 |--------|------|---------|
 | GET    | `/v1/client/users/{user_uuid}/integrations` | The integrations the user is connected to, grouped by type |
 | GET    | `/v1/client/users/{user_uuid}/connections` | List the user's connections |
-| GET    | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Get one connection |
-| PUT    | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Save `args` / `kwargs` and connect |
-| POST   | `/v1/client/users/{user_uuid}/connections/{integration_type_code}/connect` | Connect again with the saved parameters |
-| POST   | `/v1/client/users/{user_uuid}/connections/{integration_type_code}/operations/{operation}` | Run one operation of the tool |
-| DELETE | `/v1/client/users/{user_uuid}/connections/{integration_type_code}` | Delete the connection |
+| GET    | `/v1/client/users/{user_uuid}/connections/{code}` | Get the connection to one tool |
+| PUT    | `/v1/client/users/{user_uuid}/connections/{code}` | Save `args` / `kwargs` for one tool and connect |
+| POST   | `/v1/client/users/{user_uuid}/connections/{code}/connect` | Connect again with the saved parameters |
+| POST   | `/v1/client/users/{user_uuid}/connections/{code}/operations/{operation}` | Run one operation of the tool |
+| DELETE | `/v1/client/users/{user_uuid}/connections/{code}` | Delete the connection to one tool; others stay |
+
+`{code}` is a tool code or id (or a type code; see above). Optional
+query parameters: `integration_type`, `tool_code`.
 
 ### A user's integrations with connection status
 
 `GET /v1/client/users/{user_uuid}/integrations` returns the same
 envelope and group shape as the client's Integrations screen
 ([client integrations](client_integrations.md#list)), for one user.
-Each group lists the tool the client routes that type through, plus
-built-in tools such as the Holder Wallet App.
+Each group lists the type's default tool, every other tool the user
+can connect through, and built-in tools such as the Holder Wallet App,
+each with the user's own connection to that tool.
 
 ```json
 {
@@ -255,7 +288,7 @@ sequenceDiagram
     API->>Service: connect(client, user_uuid, "confirm")
     Service->>Service: check type enabled for client
     Service->>Service: read args/kwargs from the secret store
-    Service->>Service: find the tool chosen for the type
+    Service->>Service: find the named tool, or the type's default
     Service->>Registry: get("<tool code>")
     Registry-->>Service: connector class
     Service->>Service: check args fit signature
@@ -268,7 +301,7 @@ sequenceDiagram
 ## Data model
 
 Table `user_integration_connections` (migrations `d5a8114493b4`,
-`087d594969e4`):
+`087d594969e4`, `4c7d2e9b1a58`):
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -276,6 +309,7 @@ Table `user_integration_connections` (migrations `d5a8114493b4`,
 | `client_id` | `CHAR(32)` | FK `clients`, `CASCADE` |
 | `user_uuid` | `CHAR(32)` | The client's user id |
 | `integration_type_id` | `CHAR(32)` | FK `integration_types`, `RESTRICT` |
+| `integration_tool_id` | `CHAR(32)` | FK `integration_tools`, `RESTRICT`; null only for inputs saved while the type had no tool |
 | `parameters_secret_reference` | `VARCHAR(1024)` | Secret store reference (ARN in AWS) to `{"args", "kwargs"}` |
 | `parameter_summary` | `JSON` | `{"arg_count", "kwarg_names"}`, so listings never read the secret |
 | `status` | `VARCHAR(20)` | `pending`, `connected`, `failed` |
@@ -283,8 +317,10 @@ Table `user_integration_connections` (migrations `d5a8114493b4`,
 | `last_error` | `VARCHAR(500)` | Safe failure message |
 | `last_attempt_at`, `last_connected_at` | `DATETIME` | UTC |
 
-Unique per (`client_id`, `user_uuid`, `integration_type_id`), indexed on
-(`client_id`, `user_uuid`).
+Unique per (`client_id`, `user_uuid`, `integration_type_id`,
+`integration_tool_id`), indexed on (`client_id`, `user_uuid`). Inputs
+are stored under the secret name
+`clients/<client>/users/<user>/connections/<type>/<tool>`.
 
 Table `integration_operation_logs`: one row per operation call, with
 `client_id` (set to null if the client is deleted), `user_uuid`,
@@ -334,3 +370,7 @@ Table `integration_operation_logs`: one row per operation call, with
 - `tests/features/user_connections/test_operations.py` — the full HTTP
   tool flow: definition, credentials, operations, audit, and errors.
 - `tests/connectors/test_registry.py` — registry and signature checks.
+- `tests/features/sessions/test_multiple_tools.py` — a connection per
+  tool: save, read, reconnect, delete one tool only, the user listing,
+  inputs saved before a tool was chosen, and tool codes and ids in the
+  URL.

@@ -4,7 +4,7 @@ import re
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -12,6 +12,7 @@ from app.features.clients.schemas import (
     CREDENTIAL_NAME_PATTERN,
     MAX_CREDENTIAL_VALUE_LENGTH,
     MAX_CREDENTIALS,
+    check_settings_size,
 )
 
 LISTING_MESSAGE = "Integrations retrieved successfully."
@@ -94,6 +95,7 @@ class IntegrationSystem(BaseModel):
     source_role_id: uuid.UUID
     name: str
     status_note: str | None
+    logo_url: str | None
     is_connected: bool
     is_active: bool
     is_default: bool
@@ -142,6 +144,7 @@ class UserIntegrationSystem(BaseModel):
     source_role_id: uuid.UUID
     name: str
     status_note: str | None
+    logo_url: str | None
     is_connected: bool
     is_active: bool
     is_default: bool
@@ -203,6 +206,7 @@ class ToolConnectionDetail(BaseModel):
     name: str
     provider: str | None
     description: str | None
+    logo_url: str | None
     integration_types: list[IntegrationTypeInfo]
     connector_kind: str | None
     auth_method: str | None = Field(
@@ -218,6 +222,13 @@ class ToolConnectionDetail(BaseModel):
     operations: list[str]
     flows: list[str]
     is_enabled: bool
+    settings: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The client's own non-secret options for this tool, such as "
+            "the provider `environment`."
+        ),
+    )
     status: CardStatus
     last_tested_at: datetime | None
     last_test_message: str | None
@@ -234,6 +245,13 @@ class ToolConnectionUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     is_enabled: bool | None = None
+    settings: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Replaces this tool's options, such as the provider "
+            "`environment`; other tools keep theirs. Not for credentials."
+        ),
+    )
     credentials: dict[str, str] | None = Field(
         default=None, max_length=MAX_CREDENTIALS
     )
@@ -246,10 +264,13 @@ class ToolConnectionUpdate(BaseModel):
         """Require a change, and validate names without echoing values."""
         if (
             self.is_enabled is None
+            and self.settings is None
             and not self.credentials
             and not self.remove_credentials
         ):
-            raise ValueError("send is_enabled, credentials, or both")
+            raise ValueError("send is_enabled, settings, or credentials")
+        if self.settings is not None:
+            check_settings_size(self.settings)
         names = [*(self.credentials or {}), *self.remove_credentials]
         for name in names:
             if not re.fullmatch(CREDENTIAL_NAME_PATTERN, name):

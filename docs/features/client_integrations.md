@@ -1,7 +1,7 @@
 # Client Integrations (the Integrations screen)
 
 > Package: `app/features/client_integrations/`
-> Last updated: 2026-10-02
+> Last updated: 2026-10-13
 
 ## Overview
 
@@ -103,7 +103,7 @@ renders it unchanged. Ids are this service's UUIDs.
 | system `source_role_id` | The group's `id` |
 | system `is_connected` | `status` is `connected` or `configured` |
 | system `is_active` | The client has the tool switched on |
-| system `is_default` | Built-in tool, or the tool the type routes users through |
+| system `is_default` | Built-in tool, or the type's default tool (used when a request names none). Several tools of a type can be active at once |
 | system `code` | Extra to the EveryCRED shape: needed for the drawer, Save, and Test connection |
 
 Groups follow the types' `display_order`. A type the client has not

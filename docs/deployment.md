@@ -1,6 +1,6 @@
 # Deployment
 
-> Last updated: 2026-09-30
+> Last updated: 2026-10-12
 
 The service runs as a Docker container (or, alternatively, as systemd
 services; see [Without Docker](#without-docker-systemd)) on the same host
@@ -157,6 +157,15 @@ Ubuntu's MySQL accepts none of that by default. On the host:
    `sudo ufw allow from 172.16.0.0/12 to any port 3306 proto tcp`.
 
 Do not set `COMPOSE_FILE` to the socket override when using TCP.
+
+### Logos in S3
+
+Set `LOGO_STORAGE_BACKEND=s3`, `LOGO_S3_BUCKET`, `AWS_REGION`, and
+`LOGO_PUBLIC_BASE_URL` (the bucket's URL, e.g.
+`https://<bucket>.s3.<region>.amazonaws.com`, or a CloudFront domain).
+Make `integration-tools/logos/*` publicly readable with a bucket policy,
+and give the service `s3:PutObject` and `s3:DeleteObject` on that
+prefix; see [media](core/media.md).
 
 ### AWS credentials
 

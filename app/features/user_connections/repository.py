@@ -25,14 +25,26 @@ class UserConnectionRepository:
         client_id: uuid.UUID,
         user_uuid: uuid.UUID,
         integration_type_id: uuid.UUID,
+        integration_tool_id: uuid.UUID | None,
     ) -> UserIntegrationConnection | None:
-        """Return the user's connection for one integration type."""
+        """Return the user's connection to one tool of a type.
+
+        ``integration_tool_id=None`` finds inputs saved while the type
+        had no tool.
+        """
+        tool_matches = (
+            UserIntegrationConnection.integration_tool_id.is_(None)
+            if integration_tool_id is None
+            else UserIntegrationConnection.integration_tool_id
+            == integration_tool_id
+        )
         return await self.session.scalar(
             select(UserIntegrationConnection).where(
                 UserIntegrationConnection.client_id == client_id,
                 UserIntegrationConnection.user_uuid == user_uuid,
                 UserIntegrationConnection.integration_type_id
                 == integration_type_id,
+                tool_matches,
             )
         )
 

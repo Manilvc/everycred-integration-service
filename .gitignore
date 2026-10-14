@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Integration tool logos stored locally in development (LOGO_STORAGE_BACKEND=local)
+media/

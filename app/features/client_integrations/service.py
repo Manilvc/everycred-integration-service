@@ -29,6 +29,7 @@ from app.connectors.http.config import FlowConfig
 from app.connectors.registry import ConnectorRegistry
 from app.connectors.resolution import connector_kind, resolve_connector
 from app.core.config import Settings
+from app.core.media import public_url
 from app.core.models import utc_now
 from app.core.secret_store import SecretStore, SecretStoreError
 from app.features.client_integrations.models import (
@@ -80,6 +81,7 @@ from app.features.user_connections.models import UserIntegrationConnection
 from app.features.user_connections.repository import (
     UserConnectionRepository,
 )
+from app.features.user_connections.targets import effective_settings
 
 logger = logging.getLogger(__name__)
 
@@ -269,10 +271,11 @@ class ClientIntegrationService:
     ) -> UserIntegrationsListingResponse:
         """Return every active type with the user's status for each tool.
 
-        A user connects to a type through the tool the client routes it
-        to, so each group lists that tool (if the type is enabled and a
-        tool is chosen) and any built-in tools. Works for users this
-        service has never seen: they are simply not connected yet.
+        Each group lists the type's default tool, every other tool the
+        client's users can use for an enabled type, and built-in tools.
+        Each tool shows the user's own connection to it. Works for
+        users this service has never seen: they are simply not
+        connected yet.
 
         Args:
             client: The calling client.
@@ -283,8 +286,10 @@ class ClientIntegrationService:
                 types when empty or None.
         """
         catalogue = await self._load_catalogue(client)
-        connection_by_type_id = {
-            connection.integration_type_id: connection
+        connection_by_type_and_tool = {
+            (connection.integration_type_id, connection.integration_tool_id): (
+                connection
+            )
             for connection, _ in await self.user_connections.list_for_user(
                 client.id, user_uuid
             )
@@ -302,10 +307,20 @@ class ClientIntegrationService:
                 self._to_user_system(
                     state,
                     integration_type,
-                    connection_by_type_id.get(integration_type.id),
+                    self._user_connection_for(
+                        connection_by_type_and_tool,
+                        integration_type,
+                        state.tool,
+                        is_default=state.tool.id == chosen_tool_id,
+                    ),
+                    is_default=(
+                        state.is_built_in or state.tool.id == chosen_tool_id
+                    ),
                 )
                 for state in catalogue.states_for(integration_type)
-                if state.is_built_in or state.tool.id == chosen_tool_id
+                if state.is_built_in
+                or state.tool.id == chosen_tool_id
+                or (config is not None and state.is_usable_by_users)
             ]
             if statuses:
                 systems = [
@@ -380,6 +395,8 @@ class ClientIntegrationService:
             self.connections.add(connection)
         if update.is_enabled is not None:
             connection.is_enabled = update.is_enabled
+        if update.settings is not None:
+            connection.settings = update.settings
 
         credentials_changed = bool(
             update.credentials or update.remove_credentials
@@ -396,10 +413,12 @@ class ClientIntegrationService:
         if reference_to_delete is not None:
             await self._delete_secret_quietly(reference_to_delete, tool.code)
         logger.info(
-            "Client %s updated tool %s (enabled=%s, credentials changed=%s)",
+            "Client %s updated tool %s (enabled=%s, settings changed=%s, "
+            "credentials changed=%s)",
             client.id,
             tool.code,
             connection.is_enabled,
+            update.settings is not None,
             credentials_changed,
         )
         state = await self._load_state(client, tool)
@@ -495,7 +514,7 @@ class ClientIntegrationService:
                 user_uuid=None,
                 integration_type_code=integration_type.code,
                 tool_code=tool.code,
-                client_settings=config.settings,
+                client_settings=effective_settings(config, state.connection),
                 http_client=self.http_client,
                 credentials=credentials,
                 tool_config=tool.connector_config,
@@ -672,6 +691,7 @@ class ClientIntegrationService:
             source_role_id=integration_type.id,
             name=state.tool.name,
             status_note=state.tool.description,
+            logo_url=public_url(state.tool.logo_path),
             is_connected=status in _CONNECTED_STATUSES,
             is_active=state.is_enabled,
             is_default=state.is_built_in or is_chosen,
@@ -682,10 +702,33 @@ class ClientIntegrationService:
         )
 
     @staticmethod
+    def _user_connection_for(
+        connection_by_type_and_tool: dict[
+            tuple[uuid.UUID, uuid.UUID | None], UserIntegrationConnection
+        ],
+        integration_type: IntegrationType,
+        tool: IntegrationTool,
+        *,
+        is_default: bool,
+    ) -> UserIntegrationConnection | None:
+        connection = connection_by_type_and_tool.get(
+            (integration_type.id, tool.id)
+        )
+        if connection is None and is_default:
+            # Inputs saved while the type had no tool belong to the
+            # tool that became its default.
+            connection = connection_by_type_and_tool.get(
+                (integration_type.id, None)
+            )
+        return connection
+
+    @staticmethod
     def _to_user_system(
         state: _ToolState,
         integration_type: IntegrationType,
         connection: UserIntegrationConnection | None,
+        *,
+        is_default: bool,
     ) -> UserIntegrationSystem:
         # Built-in tools are no exception: a user is connected only once
         # they have a connection of their own.
@@ -701,9 +744,10 @@ class ClientIntegrationService:
             source_role_id=integration_type.id,
             name=state.tool.name,
             status_note=state.tool.description,
+            logo_url=public_url(state.tool.logo_path),
             is_connected=status is UserIntegrationStatus.CONNECTED,
             is_active=state.is_usable_by_users,
-            is_default=True,
+            is_default=is_default,
             status=status,
             tool_status=state.card_status,
             connection_id=connection.id if connection else None,
@@ -750,6 +794,7 @@ class ClientIntegrationService:
             name=tool.name,
             provider=tool.provider,
             description=tool.description,
+            logo_url=public_url(tool.logo_path, self.settings),
             # Built-in tools are open to every client, so they list all
             # their types, not only the ones enabled for the client.
             integration_types=[
@@ -792,6 +837,7 @@ class ClientIntegrationService:
                 )
             ],
             is_enabled=state.is_enabled,
+            settings=state.connection.settings if state.connection else {},
             status=state.card_status,
             last_tested_at=(
                 state.connection.last_tested_at if state.connection else None

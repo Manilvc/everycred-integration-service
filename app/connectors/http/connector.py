@@ -149,7 +149,11 @@ class HttpConnector(IntegrationConnector):
         values = self._values(args, kwargs)
         request = self._build_request(config, operation_config, values)
         response = await self._send(config, request, values, operation)
-        if response.status_code == 401 and config.auth is not None:
+        if (
+            response.status_code == 401
+            and config.auth is not None
+            and self.context.user_access_token is None
+        ):
             oauth.token_cache.invalidate(
                 oauth.cache_key(
                     self.context.tool_code,
@@ -217,7 +221,11 @@ class HttpConnector(IntegrationConnector):
         operation: str,
     ) -> httpx.Response:
         headers = dict(request["headers"])
-        if config.auth is not None:
+        if self.context.user_access_token is not None:
+            headers["Authorization"] = (
+                f"Bearer {self.context.user_access_token}"
+            )
+        elif config.auth is not None:
             headers["Authorization"] = (
                 f"Bearer {await self._access_token(config, values)}"
             )

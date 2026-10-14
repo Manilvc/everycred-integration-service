@@ -130,3 +130,29 @@ class InvalidInputsError(AppError):
 
     def __init__(self, names: list[str], reason: str) -> None:
         super().__init__(f"Invalid inputs ({', '.join(names)}): {reason}.")
+
+
+class IntegrationTypeRequiredError(AppError):
+    """Raised when a tool serves several types and none was named."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "integration_type_required"
+
+    def __init__(self, tool_code: str, type_codes: list[str]) -> None:
+        super().__init__(
+            f"Tool '{tool_code}' serves several integration types "
+            f"({', '.join(type_codes)}); pass ?integration_type=."
+        )
+
+
+class ConflictingToolCodeError(AppError):
+    """Raised when the path names one tool and ``tool_code`` another."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    error_code = "conflicting_tool_code"
+
+    def __init__(self, path_tool: str, query_tool: str) -> None:
+        super().__init__(
+            f"The path names tool '{path_tool}' but tool_code is "
+            f"'{query_tool}'; send one of them."
+        )

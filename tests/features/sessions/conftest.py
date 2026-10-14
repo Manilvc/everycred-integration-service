@@ -11,6 +11,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.http_client import get_http_client
+from app.core.models import utc_now
 from app.features.integration_types.models import IntegrationType
 from tests.features.clients.conftest import create_client, issue_api_key
 
@@ -196,11 +197,24 @@ def session_url(session_id: str, action: str = "") -> str:
     return f"{base}/{action}" if action else base
 
 
+def consent(**overrides: Any) -> dict[str, Any]:
+    """Consent as a client backend would relay it, given just now."""
+    return {
+        "purpose": "Verify your identity to receive your credential",
+        "notice_version": "2026-10-01",
+        "language": "en",
+        "consented_at": utc_now().isoformat(),
+        "reference": "consent-7",
+        **overrides,
+    }
+
+
 async def start(
     client: AsyncClient,
     setup: dict[str, Any],
     flow: str = "aadhaar_otp",
     integration_type: str = "confirm",
+    body: dict[str, Any] | None = None,
     **inputs: Any,
 ) -> httpx.Response:
     return await client.post(
@@ -210,6 +224,8 @@ async def start(
             "flow": flow,
             "reference": "invite-7",
             "inputs": inputs,
+            "consent": consent(),
+            **(body or {}),
         },
         headers=setup["key"],
     )
