@@ -63,6 +63,17 @@ _DATA_PATH_PATTERN = r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$"
 # Header names that carry credentials. Their values must come from the
 # secret store; the tool configuration itself is stored unencrypted.
 _SENSITIVE_HEADER = re.compile(r"authorization|api[-_]?key|token|secret", re.I)
+# Grant types are plain words or URNs (RFC 6749 section 4.5).
+_GRANT_TYPE_PATTERN = r"^[A-Za-z0-9_.:/-]{1,100}$"
+_FORM_FIELD_PATTERN = r"^[A-Za-z0-9_.-]{1,64}$"
+# Token form fields that have their own auth setting.
+_TOKEN_FORM_FIELDS = {
+    "grant_type",
+    "scope",
+    "audience",
+    "client_id",
+    "client_secret",
+}
 
 
 def _source_of(placeholder: str) -> str:
@@ -154,6 +165,13 @@ class OAuth2ClientCredentials(BaseModel):
         audience: Audience parameter, for providers that use one.
         client_auth: Send the id and secret in the form body or with
             HTTP Basic authentication; providers differ.
+        grant_type: Sent as ``grant_type``. Standard providers use
+            ``client_credentials``; a few use their own value with the
+            same token exchange (Keka uses ``kekaapi``).
+        extra_form: Further form fields for the token request, such as
+            Keka's ``{"api_key": "{credentials.api_key}"}``. Values are
+            literals or ``{credentials.*}`` / ``{settings.*}``
+            placeholders.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -165,6 +183,10 @@ class OAuth2ClientCredentials(BaseModel):
     scope: str | None = Field(default=None, max_length=1000)
     audience: str | None = Field(default=None, max_length=500)
     client_auth: Literal["body", "basic"] = "body"
+    grant_type: str = Field(
+        default="client_credentials", pattern=_GRANT_TYPE_PATTERN
+    )
+    extra_form: dict[str, str] = Field(default_factory=dict, max_length=10)
 
     @model_validator(mode="after")
     def check_fields(self) -> "OAuth2ClientCredentials":
@@ -180,8 +202,26 @@ class OAuth2ClientCredentials(BaseModel):
                 for placeholder in find_placeholders(self.client_id)
             }
             secret_placeholders = find_placeholders(self.client_secret)
+            form_sources = {
+                _source_of(placeholder)
+                for placeholder in find_placeholders(self.extra_form)
+            }
         except TemplateSyntaxError as exc:
             raise ValueError(str(exc)) from exc
+        if reserved := _TOKEN_FORM_FIELDS & set(self.extra_form):
+            raise ValueError(
+                f"extra_form may not set '{sorted(reserved)[0]}'; use the "
+                "matching auth field"
+            )
+        for name in self.extra_form:
+            if not re.fullmatch(_FORM_FIELD_PATTERN, name):
+                raise ValueError(f"extra_form name '{name}' is not valid")
+        # The token request runs for the client as a whole, so it can
+        # only read the client's stored credentials and settings.
+        if not form_sources <= {"credentials", "settings"}:
+            raise ValueError(
+                "extra_form may only use credentials or settings placeholders"
+            )
         if not url_sources <= {"credentials", "settings"}:
             raise ValueError(
                 "token_url may only use credentials or settings placeholders"
@@ -205,7 +245,12 @@ class OAuth2ClientCredentials(BaseModel):
     def placeholders(self) -> set[str]:
         """Return every placeholder the token request reads."""
         return find_placeholders(
-            [self.token_url, self.client_id, self.client_secret]
+            [
+                self.token_url,
+                self.client_id,
+                self.client_secret,
+                self.extra_form,
+            ]
         )
 
 

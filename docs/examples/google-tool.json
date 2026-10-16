@@ -1,0 +1,93 @@
+{
+  "name": "Google",
+  "provider": "Google",
+  "description": "Google account sign-in; the holder's identity comes from the signed ID token",
+  "is_active": true,
+  "integration_types": [
+    "confirm"
+  ],
+  "connector_config": {
+    "type": "http",
+    "environments": {
+      "production": "https://openidconnect.googleapis.com/v1"
+    },
+    "default_environment": "production",
+    "response": {
+      "success_field": null,
+      "data_field": null,
+      "message_field": null
+    },
+    "flows": {
+      "google_sign_in": {
+        "purpose": "verification",
+        "description": "Sign in with your Google account",
+        "authorization": {
+          "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+          "token_url": "https://oauth2.googleapis.com/token",
+          "issuer": "https://accounts.google.com",
+          "client_id": "{credentials.client_id}",
+          "client_secret": "{credentials.client_secret}",
+          "scope": "openid profile email",
+          "extra_params": {
+            "prompt": "select_account"
+          }
+        },
+        "outputs": {
+          "full_name": "name",
+          "first_name": "given_name",
+          "last_name": "family_name",
+          "email": "email",
+          "hosted_domain": "hd",
+          "google_subject": "sub"
+        },
+        "verified_when": [
+          {
+            "path": "email_verified",
+            "one_of": [
+              true,
+              "true"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "fields": [
+    {
+      "flow": "google_sign_in",
+      "key": "name",
+      "label": "Full name"
+    },
+    {
+      "flow": "google_sign_in",
+      "key": "given_name",
+      "label": "First name"
+    },
+    {
+      "flow": "google_sign_in",
+      "key": "family_name",
+      "label": "Last name"
+    },
+    {
+      "flow": "google_sign_in",
+      "key": "email",
+      "label": "Email"
+    },
+    {
+      "flow": "google_sign_in",
+      "key": "email_verified",
+      "label": "Email verified",
+      "value_type": "boolean"
+    },
+    {
+      "flow": "google_sign_in",
+      "key": "hd",
+      "label": "Workspace domain"
+    },
+    {
+      "flow": "google_sign_in",
+      "key": "sub",
+      "label": "Google account id"
+    }
+  ]
+}

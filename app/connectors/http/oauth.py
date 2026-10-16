@@ -78,7 +78,14 @@ def cache_key(
 ) -> str:
     """Return the cache key for one client's token at one tool."""
     rendered = render(
-        [auth.token_url, auth.client_id, auth.client_secret, auth.scope],
+        [
+            auth.token_url,
+            auth.client_id,
+            auth.client_secret,
+            auth.scope,
+            auth.grant_type,
+            auth.extra_form,
+        ],
         values,
     )
     fingerprint = hashlib.sha256(repr(rendered).encode()).hexdigest()
@@ -101,11 +108,13 @@ async def request_token(
     token_url = render(auth.token_url, url_encode_values(values))
     client_id = str(render(auth.client_id, values))
     client_secret = str(render(auth.client_secret, values))
-    form: dict[str, str] = {"grant_type": "client_credentials"}
+    form: dict[str, str] = {"grant_type": auth.grant_type}
     if auth.scope:
         form["scope"] = auth.scope
     if auth.audience:
         form["audience"] = auth.audience
+    for name, template in auth.extra_form.items():
+        form[name] = str(render(template, values))
     basic_auth: tuple[str, str] | None = None
     if auth.client_auth == "basic":
         basic_auth = (client_id, client_secret)

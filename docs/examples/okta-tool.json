@@ -1,0 +1,89 @@
+{
+  "name": "Okta",
+  "provider": "Okta",
+  "description": "Okta (Auth0) sign-in; the holder's identity comes from the signed ID token",
+  "is_active": true,
+  "integration_types": [
+    "confirm"
+  ],
+  "connector_config": {
+    "type": "http",
+    "environments": {
+      "production": "https://dev-0tt8pcdtcj4cq17k.us.auth0.com"
+    },
+    "default_environment": "production",
+    "response": {
+      "success_field": null,
+      "data_field": null,
+      "message_field": null
+    },
+    "flows": {
+      "okta_sign_in": {
+        "purpose": "verification",
+        "description": "Sign in with your Okta account",
+        "authorization": {
+          "authorize_url": "https://dev-0tt8pcdtcj4cq17k.us.auth0.com/authorize",
+          "token_url": "https://dev-0tt8pcdtcj4cq17k.us.auth0.com/oauth/token",
+          "issuer": "https://dev-0tt8pcdtcj4cq17k.us.auth0.com/",
+          "client_id": "{credentials.client_id}",
+          "client_secret": "{credentials.client_secret}",
+          "scope": "openid profile email",
+          "extra_params": {
+            "prompt": "login"
+          }
+        },
+        "outputs": {
+          "full_name": "name",
+          "first_name": "given_name",
+          "last_name": "family_name",
+          "email": "email",
+          "email_verified": "email_verified",
+          "okta_subject": "sub"
+        },
+        "verified_when": [
+          {
+            "path": "sub"
+          }
+        ]
+      }
+    }
+  },
+  "fields": [
+    {
+      "flow": "okta_sign_in",
+      "key": "name",
+      "label": "Full name"
+    },
+    {
+      "flow": "okta_sign_in",
+      "key": "given_name",
+      "label": "First name"
+    },
+    {
+      "flow": "okta_sign_in",
+      "key": "family_name",
+      "label": "Last name"
+    },
+    {
+      "flow": "okta_sign_in",
+      "key": "nickname",
+      "label": "Nickname"
+    },
+    {
+      "flow": "okta_sign_in",
+      "key": "email",
+      "label": "Email"
+    },
+    {
+      "flow": "okta_sign_in",
+      "key": "email_verified",
+      "label": "Email verified",
+      "value_type": "boolean"
+    },
+    {
+      "flow": "okta_sign_in",
+      "key": "sub",
+      "label": "Okta user id"
+    }
+  ]
+}

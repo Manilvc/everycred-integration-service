@@ -1,0 +1,131 @@
+{
+  "name": "Keka HR",
+  "provider": "Keka",
+  "description": "Employee records from Keka HR, looked up by employee number",
+  "is_active": true,
+  "integration_types": [
+    "gather"
+  ],
+  "connector_config": {
+    "type": "http",
+    "environments": {
+      "viitorcloud": "https://viitorcloud.keka.com/api/v1"
+    },
+    "default_environment": "viitorcloud",
+    "auth": {
+      "type": "oauth2_client_credentials",
+      "token_url": "https://login.keka.com/connect/token",
+      "client_id": "{credentials.client_id}",
+      "client_secret": "{credentials.client_secret}",
+      "grant_type": "kekaapi",
+      "scope": "kekaapi",
+      "extra_form": {
+        "api_key": "{credentials.api_key}"
+      }
+    },
+    "response": {
+      "success_field": "succeeded",
+      "data_field": "data",
+      "message_field": "message"
+    },
+    "operations": {
+      "get_employee": {
+        "method": "GET",
+        "path": "/hris/employees",
+        "description": "Find one employee by employee number",
+        "query": {
+          "employeeNumbers": "{kwargs.employee_number}"
+        }
+      },
+      "list_one_employee": {
+        "method": "GET",
+        "path": "/hris/employees",
+        "description": "Read one employee to check the credentials work",
+        "query": {
+          "pageSize": "1"
+        }
+      }
+    },
+    "test_operation": "list_one_employee",
+    "flows": {
+      "keka_employee": {
+        "purpose": "gather",
+        "description": "Fetch the employee's record from Keka HR",
+        "steps": [
+          {
+            "operation": "get_employee",
+            "inputs": [
+              "employee_number"
+            ]
+          }
+        ],
+        "input_specs": {
+          "employee_number": {
+            "label": "Employee number",
+            "input_type": "text",
+            "min_length": 1,
+            "max_length": 50
+          }
+        },
+        "outputs": {
+          "full_name": "0.displayName",
+          "first_name": "0.firstName",
+          "last_name": "0.lastName",
+          "email": "0.email",
+          "employee_number": "0.employeeNumber",
+          "job_title": "0.jobTitle.title",
+          "joining_date": "0.joiningDate",
+          "employment_status": "0.employmentStatus"
+        }
+      }
+    }
+  },
+  "fields": [
+    {
+      "flow": "keka_employee",
+      "key": "0.displayName",
+      "label": "Full name"
+    },
+    {
+      "flow": "keka_employee",
+      "key": "0.firstName",
+      "label": "First name"
+    },
+    {
+      "flow": "keka_employee",
+      "key": "0.lastName",
+      "label": "Last name"
+    },
+    {
+      "flow": "keka_employee",
+      "key": "0.email",
+      "label": "Work email"
+    },
+    {
+      "flow": "keka_employee",
+      "key": "0.employeeNumber",
+      "label": "Employee number"
+    },
+    {
+      "flow": "keka_employee",
+      "key": "0.jobTitle.title",
+      "label": "Job title"
+    },
+    {
+      "flow": "keka_employee",
+      "key": "0.joiningDate",
+      "label": "Joining date"
+    },
+    {
+      "flow": "keka_employee",
+      "key": "0.employmentStatus",
+      "label": "Employment status code",
+      "value_type": "number"
+    },
+    {
+      "flow": "keka_employee",
+      "key": "0.reportsTo.email",
+      "label": "Manager email"
+    }
+  ]
+}

@@ -233,3 +233,65 @@ def test_test_operation_may_not_use_user_inputs() -> None:
 
     with pytest.raises(ValidationError, match="runs without a user"):
         HttpConnectorConfig.model_validate(config)
+
+
+async def test_custom_grant_type_and_extra_form_are_sent() -> None:
+    provider = FakeProvider()
+    connector = make_connector(
+        provider,
+        oauth_config(
+            grant_type="kekaapi",
+            scope="kekaapi",
+            extra_form={"api_key": "{credentials.api_key}"},
+        ),
+        credentials={**CREDENTIALS, "api_key": "key-456"},
+    )
+
+    await connector.run_operation("me")
+
+    assert parse_qs(provider.token_requests[0].content.decode()) == {
+        "grant_type": ["kekaapi"],
+        "scope": ["kekaapi"],
+        "api_key": ["key-456"],
+        "client_id": ["app-123"],
+        "client_secret": ["s3cret-value"],
+    }
+
+
+async def test_rotated_extra_form_credential_gets_a_new_token() -> None:
+    provider = FakeProvider()
+    config = oauth_config(extra_form={"api_key": "{credentials.api_key}"})
+
+    await make_connector(
+        provider, config, {**CREDENTIALS, "api_key": "old"}
+    ).run_operation("me")
+    await make_connector(
+        provider, config, {**CREDENTIALS, "api_key": "new"}
+    ).run_operation("me")
+
+    assert len(provider.token_requests) == 2
+
+
+def test_extra_form_credentials_are_required() -> None:
+    config = HttpConnectorConfig.model_validate(
+        oauth_config(extra_form={"api_key": "{credentials.api_key}"})
+    )
+
+    assert "api_key" in config.required_credentials()
+
+
+@pytest.mark.parametrize(
+    ("auth_changes", "message"),
+    [
+        ({"extra_form": {"grant_type": "x"}}, "may not set 'grant_type'"),
+        ({"extra_form": {"client_secret": "x"}}, "may not set"),
+        ({"extra_form": {"api_key": "{kwargs.key}"}}, "credentials or"),
+        ({"extra_form": {"bad name": "x"}}, "is not valid"),
+        ({"grant_type": "client credentials"}, "grant_type"),
+    ],
+)
+def test_invalid_token_form_settings_are_rejected(
+    auth_changes: dict, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        HttpConnectorConfig.model_validate(oauth_config(**auth_changes))

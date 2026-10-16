@@ -66,6 +66,13 @@ header; the connector obtains and caches the token:
 - `client_secret` must be exactly one `{credentials.<name>}` placeholder.
 - `client_auth: "basic"` sends the id and secret with HTTP Basic instead
   of in the form body.
+- `grant_type` defaults to `client_credentials`. Providers with their
+  own grant name set it here; Keka uses `kekaapi`.
+- `extra_form` adds fields to the token request, such as
+  `{"api_key": "{credentials.api_key}"}` for Keka. Values are literals
+  or credentials/settings placeholders; `grant_type`, `scope`,
+  `audience`, `client_id` and `client_secret` have their own fields and
+  cannot be set here. See `docs/examples/keka-tool.json`.
 
 `test_operation` names an operation that **Test connection** runs for the
 client without any user (so it may not use `args`, `kwargs`, or

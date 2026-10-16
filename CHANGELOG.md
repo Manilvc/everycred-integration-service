@@ -25,6 +25,11 @@
 
 ### Added
 
+- `oauth2_client_credentials` auth accepts `grant_type` (default
+  `client_credentials`) and `extra_form` fields for the token request,
+  so providers such as Keka (`grant_type=kekaapi` plus an `api_key`)
+  work without code. Example definitions for Keka, Google and Okta are
+  in `docs/examples/`.
 - Flow steps can set `redirect` to send the holder to a page the
   provider's response names (DigiLocker through SurePass, say). The
   session waits as `awaiting_redirect`, the step passes the provider
